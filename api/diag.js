@@ -63,15 +63,40 @@ async function jsonReport(hasOddsKey) {
     try {
       const r = await timedFetch(target, browserHeaders);
       let bodyHint = "";
+      let bodySize = 0;
+      let injuryCount = null;
       try {
-        const txt = (await r.text()).slice(0, 200);
-        bodyHint = txt.replace(/\s+/g, " ").trim();
+        const fullTxt = await r.text();
+        bodySize = fullTxt.length;
+        bodyHint = fullTxt.slice(0, 200).replace(/\s+/g, " ").trim();
+        // If this looks like an injuries endpoint, count entries so we can see
+        // which URL actually returns data.
+        if (/injuries/i.test(target)) {
+          try {
+            const j = JSON.parse(fullTxt);
+            // site v2:   { injuries: [{athletes:[...]}, ...] } OR { injuries: [...] }
+            // site web:  { items: [...] }
+            // core v2:   { items: [...] }
+            let n = 0;
+            if (Array.isArray(j.injuries)) {
+              for (const w of j.injuries) {
+                if (Array.isArray(w.athletes)) n += w.athletes.length;
+                else n += 1;
+              }
+            } else if (Array.isArray(j.items)) {
+              n = j.items.length;
+            }
+            injuryCount = n;
+          } catch (_) {}
+        }
       } catch (_) {}
       return {
         label, target,
         ok: r.ok,
         status: r.status,
         contentType: r.headers.get("content-type") || "",
+        bodySize,
+        injuryCount,
         bodyHint,
       };
     } catch (e) {
@@ -79,22 +104,50 @@ async function jsonReport(hasOddsKey) {
     }
   }
 
-  const [odds, leaders, injuries, scoreboard] = await Promise.all([
+  const SAMPLE_TEAM_ID = "13"; // Lakers — used purely to verify the route is alive.
+
+  const [odds, leaders, leadersProxy, injSiteV2, injSiteWeb, injCore, injProxy, scoreboard] = await Promise.all([
     pingOdds(),
-    ping("ESPN core (leaders)",       "https://sports.core.api.espn.com/v2/sports/basketball/leagues/nba/seasons/2026/types/3/leaders"),
-    // Per-team URL — pinged for the Lakers (id=13) just to verify the route is alive.
-    // The frontend fans out across all visible teams.
-    ping("ESPN site (injuries, sample team)", "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/teams/13/injuries"),
-    ping("ESPN site (scoreboard)",    "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard"),
+    ping("ESPN core (leaders, direct)",
+      "https://sports.core.api.espn.com/v2/sports/basketball/leagues/nba/seasons/2026/types/3/leaders"),
+    // Same path, through the Vercel catch-all proxy — verifies routing is intact.
+    ping("ESPN core (leaders, via proxy)",
+      `${new URL(request.url).origin}/api/espn-core/v2/sports/basketball/leagues/nba/seasons/2026/types/3/leaders`),
+    ping("Injuries — site v2 (per-team)",
+      `https://site.api.espn.com/apis/site/v2/sports/basketball/nba/teams/${SAMPLE_TEAM_ID}/injuries`),
+    ping("Injuries — site web common v3 (per-team)",
+      `https://site.web.api.espn.com/apis/common/v3/sports/basketball/nba/teams/${SAMPLE_TEAM_ID}/injuries`),
+    ping("Injuries — core v2 (per-team)",
+      `https://sports.core.api.espn.com/v2/sports/basketball/leagues/nba/teams/${SAMPLE_TEAM_ID}/injuries?limit=50`),
+    ping("Injuries — site v2 via proxy",
+      `${new URL(request.url).origin}/api/espn-site/apis/site/v2/sports/basketball/nba/teams/${SAMPLE_TEAM_ID}/injuries`),
+    ping("ESPN site (scoreboard)",
+      "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard"),
   ]);
+
+  const anyInjuriesWork =
+    (injSiteV2 && injSiteV2.injuryCount > 0) ||
+    (injSiteWeb && injSiteWeb.injuryCount > 0) ||
+    (injCore && injCore.injuryCount > 0);
 
   const report = {
     deployedAt: new Date().toISOString(),
     envVars: { THE_ODDS_API_KEY_set: hasOddsKey },
-    upstreams: { odds, leaders, injuries, scoreboard },
+    upstreams: {
+      odds,
+      leaders,
+      leadersProxy,
+      injSiteV2,
+      injSiteWeb,
+      injCore,
+      injProxy,
+      scoreboard,
+    },
     hint: !hasOddsKey
       ? "Env var missing. Add THE_ODDS_API_KEY in Vercel → Project Settings → Environment Variables, then trigger a NEW deployment."
-      : (odds && odds.ok ? "All systems look healthy." : "Env var is set but Odds API rejected the request — see odds.note above."),
+      : !anyInjuriesWork
+        ? "Heads up: every injury endpoint returned 0 entries for the sample team. ESPN may have an empty roster for that team in the off-season, or the per-team injuries product is currently empty league-wide."
+        : (odds && odds.ok ? "All systems look healthy." : "Env var is set but Odds API rejected the request — see odds.note above."),
   };
 
   return new Response(JSON.stringify(report, null, 2), {
@@ -159,10 +212,7 @@ function htmlShell(hasOddsKey) {
   <table>
     <thead><tr><th>Source</th><th>Status</th><th>HTTP</th><th>Detail</th></tr></thead>
     <tbody id="upstreams">
-      <tr><td>The Odds API</td><td><span class="badge pending">…</span></td><td class="mono">checking</td><td class="muted">contacting upstream</td></tr>
-      <tr><td>ESPN core (leaders)</td><td><span class="badge pending">…</span></td><td class="mono">checking</td><td class="muted">contacting upstream</td></tr>
-      <tr><td>ESPN web (injuries)</td><td><span class="badge pending">…</span></td><td class="mono">checking</td><td class="muted">contacting upstream</td></tr>
-      <tr><td>ESPN site (scoreboard)</td><td><span class="badge pending">…</span></td><td class="mono">checking</td><td class="muted">contacting upstream</td></tr>
+      <tr><td colspan="4" class="muted">Loading upstream checks…</td></tr>
     </tbody>
   </table>
 
@@ -183,6 +233,8 @@ function htmlShell(hasOddsKey) {
     var extras = [];
     if (info && info.remaining != null)  extras.push("Quota remaining: " + info.remaining);
     if (info && info.used      != null)  extras.push("Quota used: " + info.used);
+    if (info && info.injuryCount != null) extras.push("Injury entries: " + info.injuryCount);
+    if (info && info.bodySize  != null && info.bodySize > 0)  extras.push("Body size: " + info.bodySize);
     if (info && info.contentType)        extras.push("Content-Type: " + info.contentType);
     return "<tr><td><strong>" + esc(label) + "</strong></td>"
          + "<td><span class='badge " + (ok?"ok":"fail") + "'>" + (ok?"OK":"FAIL") + "</span></td>"
@@ -195,10 +247,14 @@ function htmlShell(hasOddsKey) {
     document.getElementById("hint").textContent = report.hint || "";
     var u = report.upstreams || {};
     document.getElementById("upstreams").innerHTML =
-        row("The Odds API",            u.odds)
-      + row("ESPN core (leaders)",     u.leaders)
-      + row("ESPN web (injuries)",     u.injuries)
-      + row("ESPN site (scoreboard)",  u.scoreboard);
+        row("The Odds API",                   u.odds)
+      + row("Leaders (direct)",               u.leaders)
+      + row("Leaders (via Vercel proxy)",     u.leadersProxy)
+      + row("Injuries — site v2 (direct)",    u.injSiteV2)
+      + row("Injuries — site web (direct)",   u.injSiteWeb)
+      + row("Injuries — core (direct)",       u.injCore)
+      + row("Injuries — site v2 (proxy)",     u.injProxy)
+      + row("ESPN scoreboard",                u.scoreboard);
   }).catch(function(e){
     document.getElementById("raw").textContent = "Failed to load /api/diag?json: " + (e && e.message ? e.message : e);
     document.getElementById("hint").textContent = "Diag JSON endpoint failed. The HTML shell loaded but the upstream check did not. Try refreshing.";

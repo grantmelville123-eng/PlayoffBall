@@ -642,6 +642,73 @@ const LS_INJURIES_V3 = "pb_injuries_v3";   // bump version → discard older sha
 const INJURY_TTL_MS  = 30 * 60 * 1000;
 const injuryFetchInFlight = {};            // { teamId: Promise } — dedupe parallel callers
 
+// Pull a status string out of any shape ESPN throws at us.
+function injStatusOf(inj){
+  return (
+    inj.status ||
+    inj.type?.description ||
+    (typeof inj.type === "string" ? inj.type : "") ||
+    inj.shortComment ||
+    ""
+  ).toString().trim();
+}
+
+// Parse any of the three shapes ESPN returns for a team's injury list.
+//   site v2:   { injuries: [{ athlete:{...}, status, type:{description}, ... }] }
+//              (sometimes also { team:{...}, injuries:[ { athletes:[ ... ] } ] })
+//   site web:  { items: [{ athlete:{...}, status, ... }] }   ← shape varies
+//   core v2:   { items: [{ $ref: "...athletes/123/...", status, ... }] }
+async function parseInjuryPayload(data){
+  if (!data || typeof data !== "object") return [];
+
+  // Sometimes site v2 wraps a single-team result as { team, injuries: [{ athletes: [...] }] }
+  // (one wrapper per team that injured roster). Flatten if we see that.
+  let items = [];
+  if (Array.isArray(data.injuries)){
+    for (const wrap of data.injuries){
+      if (wrap && Array.isArray(wrap.athletes)) items.push(...wrap.athletes);
+      else items.push(wrap);
+    }
+  }
+  if (!items.length && Array.isArray(data.items)) items = data.items;
+  if (!items.length) return [];
+
+  // For core v2 shape, athletes are $ref'd not embedded. Resolve in parallel,
+  // re-using the existing athlete-name cache so we don't double-fetch.
+  const refsToResolve = [];
+  for (const inj of items){
+    const a = inj.athlete || inj.player;
+    if (!a && typeof inj.$ref === "string"){
+      // Core injury record itself $refs the injury, not the athlete.
+      // Inside the injury, athlete is typically inj.athlete.$ref.
+    }
+    const aRef = inj.athlete?.$ref;
+    if (!a?.displayName && !a?.fullName && aRef) refsToResolve.push(aRef);
+  }
+  if (refsToResolve.length){
+    await Promise.all(refsToResolve.map(r => fetchAthleteName(r)));
+  }
+
+  const list = [];
+  for (const inj of items){
+    const a = inj.athlete || inj.player || {};
+    const status = injStatusOf(inj);
+    let name = a.displayName || a.fullName || [a.firstName,a.lastName].filter(Boolean).join(" ").trim();
+    if (!name && a.$ref){
+      const id = athleteIdFromRef(a.$ref);
+      name = athleteNameCache[id] || "";
+    }
+    if (name && status){
+      list.push({
+        name,
+        pos: a.position?.abbreviation || a.position?.name || "",
+        status,
+      });
+    }
+  }
+  return list;
+}
+
 async function loadAllInjuries(teamIds = []){
   const ids = Array.from(new Set((teamIds || []).filter(Boolean).map(String)));
   if (!ids.length) return {};
@@ -655,38 +722,38 @@ async function loadAllInjuries(teamIds = []){
     if (injuryFetchInFlight[teamId]) return injuryFetchInFlight[teamId];
 
     injuryFetchInFlight[teamId] = (async () => {
-      const url = `https://site.api.espn.com/apis/site/v2/sports/basketball/nba/teams/${teamId}/injuries`;
-      try{
-        const res = await fetch(url);
-        if (!res.ok){
-          if (DEBUG_LEADERS) console.log("[injuries]", teamId, "HTTP", res.status);
-          cache[teamId] = { at: now, list: [] };
-          return;
-        }
-        const data = await res.json();
+      // ESPN keeps moving injuries. Try multiple endpoints in order — first one
+      // that returns a non-empty list wins. Each shape is slightly different,
+      // so the parser below handles any of them.
+      const candidates = [
+        // Site v2 — current per-team URL (often returns {} for NBA)
+        `https://site.api.espn.com/apis/site/v2/sports/basketball/nba/teams/${teamId}/injuries`,
+        // Site web common v3 — used to be league-wide; per-team form sometimes works
+        `https://site.web.api.espn.com/apis/common/v3/sports/basketball/nba/teams/${teamId}/injuries`,
+        // Core v2 — the most reliable per-team source historically
+        `https://sports.core.api.espn.com/v2/sports/basketball/leagues/nba/teams/${teamId}/injuries?limit=50`,
+      ];
 
-        // Per-team shape:
-        //   { team:{...}, injuries: [{ athlete:{...}, status, type:{description}, ...}] }
-        const items = Array.isArray(data?.injuries) ? data.injuries : [];
-        const list = [];
-        for (const inj of items){
-          const a = inj.athlete || inj.player || {};
-          const status = (inj.status || inj.type?.description || inj.type || "").toString().trim();
-          const name = a.displayName || a.fullName || [a.firstName,a.lastName].filter(Boolean).join(" ");
-          if (name && status){
-            list.push({
-              name,
-              pos: a.position?.abbreviation || a.position?.name || "",
-              status,
-            });
+      let list = [];
+      for (const url of candidates){
+        try{
+          const res = await fetch(url);
+          if (!res.ok){
+            if (DEBUG_LEADERS) console.log("[injuries]", teamId, "HTTP", res.status, url);
+            continue;
           }
+          const data = await res.json();
+          const parsed = await parseInjuryPayload(data);
+          if (DEBUG_LEADERS) console.log("[injuries]", teamId, "→", parsed.length, "from", url);
+          if (parsed.length){
+            list = parsed;
+            break;
+          }
+        }catch(e){
+          if (DEBUG_LEADERS) console.log("[injuries]", teamId, "exception", e, url);
         }
-        cache[teamId] = { at: now, list };
-        if (DEBUG_LEADERS) console.log("[injuries]", teamId, "→", list.length, "injuries");
-      }catch(e){
-        if (DEBUG_LEADERS) console.log("[injuries]", teamId, "exception", e);
-        cache[teamId] = { at: now, list: [] };
       }
+      cache[teamId] = { at: now, list };
     })().finally(() => { delete injuryFetchInFlight[teamId]; });
 
     return injuryFetchInFlight[teamId];
@@ -1134,14 +1201,30 @@ async function fetchAllLeadersOnce(){
   ];
 
   for (const combo of combos){
-    const url = `/api/espn-core/v2/sports/basketball/leagues/nba/seasons/${combo.year}/types/${combo.type}/leaders`;
-    try{
-      const res = await fetch(url);
-      if (!res.ok){
-        if (DEBUG_LEADERS) console.log(`[leaders] core fetch failed`, res.status, combo, url);
-        continue;
+    // sports.core.api.espn.com is CORS-enabled — call ESPN directly first.
+    // If browser/network blocks it, fall back to the Vercel proxy.
+    const directUrl = `https://sports.core.api.espn.com/v2/sports/basketball/leagues/nba/seasons/${combo.year}/types/${combo.type}/leaders`;
+    const proxyUrl  = `/api/espn-core/v2/sports/basketball/leagues/nba/seasons/${combo.year}/types/${combo.type}/leaders`;
+
+    let data = null;
+    for (const url of [directUrl, proxyUrl]){
+      try{
+        const res = await fetch(url);
+        if (!res.ok){
+          if (DEBUG_LEADERS) console.log(`[leaders] core fetch failed`, res.status, combo, url);
+          continue;
+        }
+        data = await res.json();
+        if (DEBUG_LEADERS) console.log(`[leaders] core fetch OK`, combo, url);
+        break;
+      }catch(e){
+        if (DEBUG_LEADERS) console.log(`[leaders] core exception`, e, url);
       }
-      const data = await res.json();
+    }
+    if (!data){
+      continue;
+    }
+    try{
       const cats = data?.categories || [];
       if (!cats.length) continue;
 
@@ -1175,7 +1258,7 @@ async function fetchAllLeadersOnce(){
       persistLeaders();
       return;  // success — don't try further combos
     }catch(e){
-      if (DEBUG_LEADERS) console.log(`[leaders] core exception`, e, url);
+      if (DEBUG_LEADERS) console.log(`[leaders] parse exception`, e, combo);
     }
   }
 }
