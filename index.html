@@ -1,0 +1,1288 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Playoff Ball</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Anton&family=Oswald:wght@500;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#0b0d10; --panel:#12161c; --panel2:#171c24;
+    --text:#e9eef5; --mute:#98a2b3; --line:#222831;
+    --accent:#ff5a1f; --accent2:#ffb703; --live:#ff3b3b;
+    --good:#28c76f;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--bg);color:var(--text);font:15px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Inter,sans-serif}
+  a{color:inherit}
+  header{
+    background:linear-gradient(180deg,#12161c 0,#0b0d10 100%);
+    border-bottom:1px solid var(--line); padding:14px 18px;
+    display:flex; align-items:center; justify-content:space-between; gap:10px;
+    position:sticky; top:0; z-index:10;
+  }
+  .brand{display:flex; gap:12px; align-items:center; text-decoration:none; color:var(--text)}
+  .brand .logo{width:40px; height:50px; flex-shrink:0}
+  .brand-text{
+    font-family:'Anton',Impact,sans-serif;
+    font-size:26px; letter-spacing:1.5px; line-height:1; text-transform:uppercase;
+  }
+  .brand-text .accent-char{color:var(--accent)}
+  .brand-sub{
+    font-family:'Oswald',sans-serif;
+    font-size:9px; letter-spacing:3px; color:var(--mute);
+    text-transform:uppercase; display:block; margin-top:3px;
+  }
+  nav a{
+    margin-left:8px; color:var(--mute); text-decoration:none;
+    font-family:'Oswald',sans-serif; font-weight:600; text-transform:uppercase;
+    letter-spacing:1px; font-size:13px;
+    padding:8px 12px; border-radius:8px;
+  }
+  nav a:hover{color:var(--text)}
+  nav a.active{background:var(--panel2); color:var(--text)}
+  main{max-width:1200px; margin:0 auto; padding:18px}
+
+  .grid{display:grid; grid-template-columns: 2fr 1fr; gap:18px}
+  .right-col{ display:flex; flex-direction:column; }
+  .right-col .feed-card   { order: 0; }
+  .right-col .leaders-card{ order: 1; }
+  @media (max-width:900px){
+    .grid{grid-template-columns:1fr}
+    /* On phones the news feed is long — show Playoff Leaders first instead. */
+    .right-col .leaders-card{ order: 0; }
+    .right-col .feed-card   { order: 1; }
+  }
+
+  .card{background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:14px; margin-bottom:14px}
+  .card h2{margin:2px 0 10px; font-size:15px; letter-spacing:.02em; color:#cfd6e0; text-transform:uppercase}
+
+  .date-nav{display:flex; align-items:center; gap:8px; margin-bottom:8px; flex-wrap:wrap}
+  .date-btn, .refresh-btn {
+    background:var(--panel2); color:var(--text); border:1px solid var(--line);
+    border-radius:8px; padding:6px 10px; cursor:pointer; font-weight:600;
+  }
+  .date-btn:hover, .refresh-btn:hover{border-color:var(--accent)}
+  .date-label{font-weight:700}
+
+  .game{
+    background:var(--panel2); border:1px solid var(--line); border-radius:12px;
+    padding:12px; margin-bottom:10px; transition: border-color .15s ease, transform .15s ease;
+    display:block; color:inherit; text-decoration:none;
+  }
+  .game:hover{ border-color: var(--accent); transform: translateY(-1px); }
+  .game.is-live{ border-color: rgba(255,59,59,0.55); box-shadow: 0 0 0 1px rgba(255,59,59,0.18) inset; }
+  .game-row{display:flex; align-items:center; justify-content:space-between; gap:10px; padding:2px 0}
+  .team{display:flex; align-items:center; gap:10px; min-width:0}
+  .team img{width:28px;height:28px;border-radius:4px;background:#222;object-fit:contain}
+  .team .name{font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+  .team .rec{color:var(--mute); font-size:12px}
+  .home-tag{
+    display:inline-block; font-size:10px; font-weight:700; letter-spacing:.5px;
+    color:var(--accent2); border:1px solid var(--accent2); border-radius:4px;
+    padding:1px 4px; margin-left:6px; vertical-align:middle;
+  }
+  .score{font-weight:700; font-size:18px; min-width:34px; text-align:right}
+  /* Final-score asymmetry: emphasize winner, dim loser */
+  .game-row.lose .name{ color: var(--mute); font-weight:500; }
+  .game-row.lose .score{ color: var(--mute); font-weight:600; }
+  .game-row.win .score{ color: var(--good); font-size:20px; }
+  .meta{color:var(--mute); font-size:12px; margin-top:6px}
+  .live{color:var(--live); font-weight:700}
+  .live-dot{display:inline-block; width:8px; height:8px; border-radius:50%; background:var(--live); margin-right:6px; box-shadow:0 0 6px var(--live); animation: livepulse 1.4s ease-in-out infinite;}
+  @keyframes livepulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+  .final{color:var(--good); font-weight:700}
+  /* Game extras: series / odds / prediction */
+  .game-extras{
+    display:flex; flex-wrap:wrap; gap:6px 10px; margin-top:8px;
+    padding-top:8px; border-top:1px dashed var(--line);
+    font-size:12px; color:var(--mute);
+  }
+  .game-extras .pill{
+    display:inline-flex; align-items:center; gap:4px;
+    background:rgba(255,255,255,0.03); border:1px solid var(--line);
+    border-radius:999px; padding:3px 8px;
+  }
+  .game-extras .pill strong{ color: var(--text); font-weight:700; }
+  .pill.series{ color:#cfd6e0; }
+  .pill.odds  { color:#cfd6e0; }
+  .pill.pred  { color:#cfd6e0; border-color: rgba(255,179,3,0.35); }
+  .pill.pred strong{ color: var(--accent2); }
+  /* Tiny LIVE/PRE tag inside the odds pill */
+  .pill .tag{
+    display:inline-block; font-size:9px; font-weight:800; letter-spacing:.5px;
+    padding:1px 4px; border-radius:3px; margin-right:4px;
+  }
+  .pill .tag.live{ background:var(--live); color:#fff; animation: livepulse 1.4s ease-in-out infinite; }
+  .pill .tag.pre { background:var(--line); color:var(--mute); }
+  /* Injury pills */
+  .pill.injury{ color:#cfd6e0; border-color: rgba(255,90,31,0.35); }
+  .pill.injury .inj-status{
+    display:inline-block; font-size:9px; font-weight:800; letter-spacing:.5px;
+    padding:1px 4px; border-radius:3px; margin-right:4px; color:#111;
+  }
+  .pill.injury .inj-status.out      { background:#ff5a5a; color:#fff; }
+  .pill.injury .inj-status.doubtful { background:#ffb703; }
+  .pill.injury .inj-status.questionable{ background:#f1c40f; }
+  .pill.injury .inj-status.daytoday { background:#9aa5b1; }
+
+  /* Cap the feed (news/reddit) height with internal scroll so the leaders card stays visible. */
+  .feed-scroll{ max-height: 360px; overflow-y: auto; padding-right: 4px; scrollbar-width: thin; }
+  .feed-scroll::-webkit-scrollbar{ width:6px; }
+  .feed-scroll::-webkit-scrollbar-thumb{ background:var(--line); border-radius:3px; }
+
+  .news-item, .reddit-item{
+    padding:10px 0; border-bottom:1px solid var(--line);
+  }
+  .news-item:last-child, .reddit-item:last-child{border-bottom:0}
+  .news-item a, .reddit-item a{color:var(--text); text-decoration:none; font-weight:600}
+  .news-item a:hover, .reddit-item a:hover{color:var(--accent2)}
+  .news-item a:visited, .reddit-item a:visited{ color: var(--mute); }
+  .news-meta, .reddit-meta{color:var(--mute); font-size:12px; margin-top:4px}
+
+  .leader-tabs{display:flex; gap:8px; margin-bottom:8px; flex-wrap:wrap}
+  .leader-tab{
+    background:var(--panel2); border:1px solid var(--line); color:var(--text);
+    border-radius:999px; padding:5px 12px; cursor:pointer; font-weight:600; font-size:13px;
+  }
+  .leader-tab.active{background:var(--accent); border-color:var(--accent); color:#111}
+  .leader-row{display:grid; grid-template-columns: 22px 1fr 60px; gap:8px; padding:6px 0; border-bottom:1px solid var(--line); align-items:center}
+  .leader-row:last-child{border-bottom:0}
+  .leader-rank{color:var(--mute); text-align:right}
+  .leader-name{font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+  .leader-val{text-align:right; font-weight:700}
+  .empty{color:var(--mute); padding:10px 0}
+</style>
+</head>
+<body>
+<header>
+  <a href="index.html" class="brand" aria-label="Playoff Ball home">
+    <svg class="logo" viewBox="0 0 48 60" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+      <defs>
+        <linearGradient id="gold-g" x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" stop-color="#ffe27a"/>
+          <stop offset="50%" stop-color="#d4af37"/>
+          <stop offset="100%" stop-color="#9c7f24"/>
+        </linearGradient>
+        <radialGradient id="ball-g" cx="35%" cy="35%" r="75%">
+          <stop offset="0%" stop-color="#ff9068"/>
+          <stop offset="60%" stop-color="#ff6a3d"/>
+          <stop offset="100%" stop-color="#c14a22"/>
+        </radialGradient>
+      </defs>
+      <rect x="8" y="52" width="32" height="6" rx="1.5" fill="url(#gold-g)" stroke="#5e4a0e" stroke-width="0.8"/>
+      <rect x="12" y="48" width="24" height="4" fill="url(#gold-g)" stroke="#5e4a0e" stroke-width="0.6"/>
+      <path d="M18 38 L16 48 L32 48 L30 38 Z" fill="url(#gold-g)" stroke="#5e4a0e" stroke-width="0.8"/>
+      <path d="M6 26 L18 38 L30 38 L42 26 Z" fill="url(#gold-g)" stroke="#5e4a0e" stroke-width="0.8"/>
+      <ellipse cx="24" cy="26" rx="17" ry="3.5" fill="url(#gold-g)" stroke="#5e4a0e" stroke-width="0.8"/>
+      <circle cx="24" cy="15" r="11" fill="url(#ball-g)" stroke="#1a1a1a" stroke-width="1.2"/>
+      <path d="M13 15 H 35" stroke="#1a1a1a" stroke-width="1.2" fill="none" stroke-linecap="round"/>
+      <path d="M24 4 V 26" stroke="#1a1a1a" stroke-width="1.2" fill="none" stroke-linecap="round"/>
+      <path d="M16 7 Q 24 15 16 23" stroke="#1a1a1a" stroke-width="1.2" fill="none" stroke-linecap="round"/>
+      <path d="M32 7 Q 24 15 32 23" stroke="#1a1a1a" stroke-width="1.2" fill="none" stroke-linecap="round"/>
+    </svg>
+    <div>
+      <span class="brand-text">Play<span class="accent-char">off</span> Ball</span>
+      <span class="brand-sub">NBA Postseason</span>
+    </div>
+  </a>
+  <nav>
+    <a href="index.html" class="active">Scoreboard</a>
+    <a href="bracket.html">Bracket</a>
+  </nav>
+</header>
+
+<main>
+  <div class="grid">
+    <div>
+      <div class="card">
+        <h2>Games</h2>
+        <div class="date-nav">
+          <button id="prevDate" class="date-btn">‹ Prev</button>
+          <span id="dateLabel" class="date-label"></span>
+          <button id="nextDate" class="date-btn">Next ›</button>
+          <button id="todayBtn" class="date-btn">Today</button>
+          <button id="manualRefreshBtn" class="refresh-btn" title="Refresh all data">⟳ Refresh</button>
+        </div>
+        <div id="games"></div>
+      </div>
+
+    </div>
+
+    <div class="right-col">
+      <div class="card feed-card">
+        <div class="leader-tabs" id="feedTabs">
+          <button class="leader-tab active" data-feed="news">NBA News</button>
+          <button class="leader-tab" data-feed="reddit">r/nba</button>
+        </div>
+        <div class="feed-scroll">
+          <div id="news"></div>
+          <div id="reddit" style="display:none"></div>
+        </div>
+      </div>
+
+      <div class="card leaders-card">
+        <h2 id="leadersHeading">Playoff Leaders — Points per Game</h2>
+        <div class="leader-tabs">
+          <button class="leader-tab active" data-stat="points">Points</button>
+          <button class="leader-tab" data-stat="rebounds">Rebounds</button>
+          <button class="leader-tab" data-stat="assists">Assists</button>
+        </div>
+        <div id="leaders"></div>
+      </div>
+    </div>
+  </div>
+</main>
+
+<script>
+/* ===== Config ===== */
+const ESPN_SCOREBOARD = "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard";
+const ESPN_NEWS       = "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/news";
+const REDDIT_NBA      = "https://www.reddit.com/r/nba/hot.json?limit=15";
+// CORS-blocked endpoints go through Netlify proxy (_redirects file).
+const ESPN_STATS      = "/api/espn-web/apis/common/v3/sports/basketball/nba/statistics/byathlete";
+
+const DATE_WINDOW_DAYS     = 14;
+const AUTO_REFRESH_MS      = 5 * 60 * 1000;    // every 5 minutes
+const USER_IDLE_MS         = 10 * 60 * 1000;   // stop refreshing after 10 min of no activity
+const LEADERS_CACHE_TTL_MS = 60 * 60 * 1000;   // re-use leaders for 60 min (persisted to localStorage)
+const NAMES_CACHE_TTL_MS   = 7  * 24 * 60 * 60 * 1000; // athlete names: 7 days (persisted)
+const DEBUG_LEADERS        = false;            // set to true to enable console diagnostics
+
+/* ===== State ===== */
+let selectedDate   = new Date();
+let refreshTimer   = null;
+let currentStat    = "points";
+let lastActivityAt = Date.now();
+let anyLiveGames   = false;
+
+// In-memory caches (hydrated from localStorage on boot, written back on update).
+const leadersCache      = {};   // { points: {at, rows, source}, rebounds: {...}, assists: {...} }
+const athleteNameCache  = {};   // { id: name }
+
+/* ===== localStorage helpers ===== */
+const LS_LEADERS = "pb_leaders_v1";
+const LS_NAMES   = "pb_names_v1";
+function lsGet(key, fallback){
+  try { const raw = localStorage.getItem(key); return raw ? JSON.parse(raw) : fallback; }
+  catch(e){ return fallback; }
+}
+function lsSet(key, val){
+  try { localStorage.setItem(key, JSON.stringify(val)); } catch(e){ /* quota / private mode */ }
+}
+// Hydrate caches at boot.
+(function hydrate(){
+  const l = lsGet(LS_LEADERS, {});
+  for (const k of Object.keys(l||{})){
+    if (l[k] && typeof l[k].at === "number" && (Date.now() - l[k].at) < LEADERS_CACHE_TTL_MS){
+      leadersCache[k] = l[k];
+    }
+  }
+  const n = lsGet(LS_NAMES, {});
+  if (n && typeof n === "object" && typeof n.at === "number" && (Date.now() - n.at) < NAMES_CACHE_TTL_MS){
+    Object.assign(athleteNameCache, n.byId || {});
+  }
+})();
+function persistLeaders(){
+  // strip just to {at,rows,source} per stat
+  const out = {};
+  for (const k of Object.keys(leadersCache)) out[k] = leadersCache[k];
+  lsSet(LS_LEADERS, out);
+}
+function persistNames(){
+  lsSet(LS_NAMES, { at: Date.now(), byId: athleteNameCache });
+}
+
+const STAT_CFG = {
+  points:   { heading: "Points per Game",   coreNames: ["avgpoints","pointspergame"],   displayMatches: ["points per game","avg points"] },
+  rebounds: { heading: "Rebounds per Game", coreNames: ["avgrebounds","reboundspergame"], displayMatches: ["rebounds per game","avg rebounds"] },
+  assists:  { heading: "Assists per Game",  coreNames: ["avgassists","assistspergame"], displayMatches: ["assists per game","avg assists"] },
+};
+
+/* ===== Utilities ===== */
+function fmtDate(d){ return d.toLocaleDateString(undefined,{weekday:"short", month:"short", day:"numeric"}); }
+function espnDate(d){
+  const y=d.getFullYear(), m=String(d.getMonth()+1).padStart(2,"0"), dd=String(d.getDate()).padStart(2,"0");
+  return `${y}${m}${dd}`;
+}
+function dayDiff(a,b){
+  const A=new Date(a.getFullYear(),a.getMonth(),a.getDate());
+  const B=new Date(b.getFullYear(),b.getMonth(),b.getDate());
+  return Math.round((A-B)/(1000*60*60*24));
+}
+function userIsIdle(){ return (Date.now() - lastActivityAt) > USER_IDLE_MS; }
+["mousemove","keydown","touchstart","click","scroll"].forEach(ev =>
+  window.addEventListener(ev, () => { lastActivityAt = Date.now(); }, { passive: true })
+);
+
+/* ===== Games ===== */
+async function loadGames({ silent=false } = {}){
+  const host = document.getElementById("games");
+  if (!silent) host.innerHTML = `<div class="empty">Loading…</div>`;
+  try{
+    const url = `${ESPN_SCOREBOARD}?dates=${espnDate(selectedDate)}`;
+    const res = await fetch(url);
+    if(!res.ok) throw new Error("HTTP "+res.status);
+    const data = await res.json();
+    renderGames(data.events||[]);
+  }catch(e){
+    if (!silent) host.innerHTML = `<div class="empty">Couldn't load games.</div>`;
+    console.warn("games error", e);
+  }
+}
+
+/* ---- helpers used by renderGames ---- */
+function escAttr(s){ return String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
+function winPctFromSummary(summary){
+  // summary e.g. "45-37" → 0.5488. Returns null if unparseable.
+  const m = String(summary||"").match(/^\s*(\d+)\s*-\s*(\d+)/);
+  if (!m) return null;
+  const w = +m[1], l = +m[2], total = w + l;
+  return total > 0 ? w / total : null;
+}
+function pickAbbrFromOdds(odds, away, home){
+  // odds.details often looks like "LAL -6.5". Pull the abbreviation token.
+  const det = (odds?.details || "").trim();
+  const m = det.match(/^([A-Z]{2,4})\b/);
+  if (!m) return null;
+  const abbr = m[1];
+  const homeAbbr = home?.team?.abbreviation;
+  const awayAbbr = away?.team?.abbreviation;
+  if (abbr === homeAbbr) return "home";
+  if (abbr === awayAbbr) return "away";
+  return null;
+}
+function makeInternalPick(away, home, odds){
+  // 1) If odds give us a favorite, defer to the market.
+  const favSide = pickAbbrFromOdds(odds, away, home);
+  if (favSide) return { side: favSide, reason: "favorite" };
+  // 2) Otherwise compare records, with a small home-court bump.
+  const aPct = winPctFromSummary(away?.records?.[0]?.summary);
+  const hPct = winPctFromSummary(home?.records?.[0]?.summary);
+  if (aPct == null && hPct == null) return null;
+  const aScore = (aPct ?? 0.5);
+  const hScore = (hPct ?? 0.5) + 0.03;  // ~3% home-court edge
+  if (Math.abs(aScore - hScore) < 0.005) return { side: "home", reason: "even, home" };
+  return { side: hScore >= aScore ? "home" : "away", reason: "record" };
+}
+function espnGameUrl(ev){
+  const fromLinks = (ev.links||[]).find(l => /game/i.test((l.rel||[]).join(",")) && l.href);
+  if (fromLinks?.href) return fromLinks.href;
+  const id = ev.id || ev.uid?.split(":").pop();
+  return id ? `https://www.espn.com/nba/game/_/gameId/${id}` : "https://www.espn.com/nba/scoreboard";
+}
+
+function renderGames(events){
+  const host = document.getElementById("games");
+  document.getElementById("dateLabel").textContent = fmtDate(selectedDate);
+  anyLiveGames = false;
+  if(!events.length){
+    host.innerHTML = `<div class="empty">No games on this date.</div>`;
+    return;
+  }
+  host.innerHTML = events.map(ev => {
+    const c = ev.competitions?.[0]; if(!c) return "";
+    const comps = c.competitors||[];
+    const home = comps.find(x=>x.homeAway==="home")||comps[0]||{};
+    const away = comps.find(x=>x.homeAway==="away")||comps[1]||{};
+    const st = c.status?.type||{};
+    const isLive  = st.state==="in";
+    const isFinal = st.state==="post";
+    if (isLive) anyLiveGames = true;
+
+    const metaTxt = isLive ? (st.shortDetail||"Live")
+                 : isFinal ? "Final"
+                 : (st.shortDetail || new Date(c.date).toLocaleTimeString([],{hour:"numeric",minute:"2-digit"}));
+    const metaClass = isLive?"meta live":(isFinal?"meta final":"meta");
+
+    // Final → emphasize winner score, dim loser score.
+    const aScore = +(away.score ?? NaN);
+    const hScore = +(home.score ?? NaN);
+    let awayCls = "", homeCls = "";
+    if (isFinal && Number.isFinite(aScore) && Number.isFinite(hScore) && aScore !== hScore){
+      const homeWon = hScore > aScore;
+      homeCls = homeWon ? "win" : "lose";
+      awayCls = homeWon ? "lose" : "win";
+    }
+
+    function teamRow(team, side, rowCls){
+      const t = team.team||{};
+      const logo = t.logo || (t.logos&&t.logos[0]?.href) || "";
+      const name = t.shortDisplayName||t.displayName||t.abbreviation||"TBD";
+      const rec  = (team.records&&team.records[0]?.summary) ? team.records[0].summary : "";
+      const score = team.score ?? "";
+      const isHome = side === "home";
+      const homeMark = isHome ? `<span class="home-tag" title="Home team">HOME</span>` : "";
+      return `
+        <div class="game-row ${rowCls||""}">
+          <div class="team">
+            ${logo?`<img src="${escAttr(logo)}" alt="">`:""}
+            <div>
+              <div class="name">${escAttr(name)}${homeMark}</div>
+              ${rec?`<div class="rec">${escAttr(rec)}</div>`:""}
+            </div>
+          </div>
+          <div class="score">${escAttr(score)}</div>
+        </div>`;
+    }
+
+    // Series, odds, prediction
+    const series = c.series;
+    let seriesPill = "";
+    if (series && (series.summary || series.title || (series.competitors && series.competitors.length))){
+      const txt = series.summary || series.title || "";
+      if (txt) seriesPill = `<span class="pill series">${escAttr(txt)}</span>`;
+    }
+
+    const odds = c.odds && c.odds[0];
+    let oddsPill = "";
+    if (odds){
+      const parts = [];
+      if (odds.details) parts.push(escAttr(odds.details));
+      if (odds.overUnder != null) parts.push(`O/U ${escAttr(odds.overUnder)}`);
+      if (parts.length){
+        // ESPN's odds field carries the *pregame* opening/closing line, NOT
+        // live in-game odds. Label honestly:
+        //   - pregame  → PRE   (opening line)
+        //   - live     → OPEN  (the opening line is what we have; async fetch
+        //                       may upgrade this to LIVE if real live data
+        //                       is found from the core odds endpoint)
+        //   - final    → CLOSE (closing line)
+        const tag = isLive ? `<span class="tag pre" title="Opening line — live in-game odds not available from ESPN">OPEN</span>`
+                  : isFinal ? `<span class="tag pre">CLOSE</span>`
+                  : `<span class="tag pre">PRE</span>`;
+        oddsPill = `<span class="pill odds" data-odds-slot>${tag}${parts.join(" · ")}</span>`;
+      }
+    }
+
+    let predPill = "";
+    if (!isFinal){
+      const pick = makeInternalPick(away, home, odds);
+      if (pick){
+        const t = (pick.side === "home" ? home : away).team || {};
+        const tag = t.abbreviation || t.shortDisplayName || "";
+        if (tag) predPill = `<span class="pill pred" title="Our pick (${pick.reason})">Pick: <strong>${escAttr(tag)}</strong></span>`;
+      }
+    }
+
+    // Always emit .game-extras so async enrichment (live odds, injuries) has a target.
+    const extras = `<div class="game-extras">${seriesPill}${oddsPill}${predPill}<span data-injury-slot></span></div>`;
+
+    const liveBadge = isLive ? `<span class="live-dot"></span>` : "";
+    const href = espnGameUrl(ev);
+    const compId = c.id || ev.id;
+
+    return `<a class="game${isLive?" is-live":""}"
+      href="${escAttr(href)}" target="_blank" rel="noopener"
+      aria-label="Open game on ESPN"
+      data-event-id="${escAttr(ev.id||"")}"
+      data-comp-id="${escAttr(compId||"")}"
+      data-state="${escAttr(st.state||"")}"
+      data-home-id="${escAttr(home.team?.id||home.id||"")}"
+      data-away-id="${escAttr(away.team?.id||away.id||"")}"
+      data-home-abbr="${escAttr(home.team?.abbreviation||"")}"
+      data-away-abbr="${escAttr(away.team?.abbreviation||"")}"
+      data-home-name="${escAttr(home.team?.displayName||home.team?.shortDisplayName||"")}"
+      data-away-name="${escAttr(away.team?.displayName||away.team?.shortDisplayName||"")}"
+      data-state-detail="${escAttr(st.shortDetail||"")}">
+      ${teamRow(away, "away", awayCls)}
+      ${teamRow(home, "home", homeCls)}
+      <div class="${metaClass}">${liveBadge}${metaTxt}</div>
+      ${extras}
+    </a>`;
+  }).join("");
+
+  // Async enrichment: live odds for in-progress games, key injuries for all games.
+  enrichGames();
+}
+
+/* ===== Live odds (best-effort) =====
+   ESPN's c.odds[0] is usually the closing pre-game line. For games in progress,
+   we try the core odds endpoint to find a provider with live data. This is a
+   $ref index, so we only follow refs when needed and cache results for 60s. */
+const liveOddsCache = {};  // { eventId: { at, spread, total } }
+async function fetchLiveOddsForGame(eventId, compId){
+  if (!eventId) return null;
+  const cached = liveOddsCache[eventId];
+  if (cached && (Date.now() - cached.at) < 60_000) return cached;
+  const url = `https://sports.core.api.espn.com/v2/sports/basketball/leagues/nba/events/${eventId}/competitions/${compId||eventId}/odds`;
+  try{
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    const data = await res.json();
+    const items = data.items || [];
+    // Some items are inline objects with current/live data; some are refs.
+    for (const it of items){
+      // Inline shape: provider has .current with .pointSpread/.total, or .live
+      const live = it.current || it.live || null;
+      const spreadStr =
+            live?.pointSpread?.american?.displayValue
+         || live?.pointSpread?.alternateDisplayValue
+         || it.details
+         || null;
+      const totalStr =
+            live?.total?.american?.displayValue
+         || live?.overUnder
+         || it.overUnder
+         || null;
+      if (spreadStr || totalStr){
+        const out = { at: Date.now(), spread: spreadStr, total: totalStr, isLive: !!live };
+        liveOddsCache[eventId] = out;
+        return out;
+      }
+    }
+    return null;
+  }catch(e){ return null; }
+}
+
+/* ===== The Odds API integration (real live odds) =====
+   Goes through our /api/live-odds Cloudflare Function (the API key is held
+   server-side, never exposed to the browser). The function edge-caches the
+   response for 5 min, and we cache in-memory for the same window so a session
+   makes at most ~12 fetches/hour to the upstream (Cloudflare's CDN absorbs the
+   rest, costing 0 quota credits).
+
+   IMPORTANT: skipped entirely when there are no games on the visible
+   scoreboard, so off-days don't waste quota. */
+const LS_LIVEODDS = "pb_liveodds_v1";
+const LIVEODDS_TTL_MS = 5 * 60 * 1000;
+let liveOddsApiCache = lsGet(LS_LIVEODDS, null);
+let liveOddsLoadPromise = null;
+
+// Mascot extractor — works for both ESPN and The Odds API team names.
+// Uses the LAST word of the team name with a special case for "Trail Blazers".
+function teamMascot(name){
+  const lower = String(name||"").toLowerCase().trim();
+  if (lower.includes("trail blazers")) return "trailblazers";
+  const parts = lower.split(/\s+/);
+  return (parts[parts.length-1] || "").replace(/[^a-z0-9]/g, "");
+}
+// Order-independent key for matching ESPN games to Odds-API events.
+function gameKey(awayName, homeName){
+  return [teamMascot(awayName), teamMascot(homeName)].sort().join("|");
+}
+
+async function loadLiveOddsApi(){
+  // Return cached map if fresh.
+  if (liveOddsApiCache && liveOddsApiCache.at && (Date.now() - liveOddsApiCache.at) < LIVEODDS_TTL_MS){
+    return liveOddsApiCache.byKey || {};
+  }
+  if (liveOddsLoadPromise) return liveOddsLoadPromise;
+
+  liveOddsLoadPromise = (async () => {
+    try{
+      const res = await fetch("/api/live-odds");
+      if (!res.ok){
+        if (DEBUG_LEADERS) console.log("[odds-api] HTTP", res.status, "remaining:", res.headers.get("x-odds-remaining"));
+        return {};
+      }
+      const events = await res.json();
+      // Quota visibility — useful in DevTools regardless of DEBUG flag.
+      const remaining = res.headers.get("x-odds-remaining");
+      if (remaining != null) console.log("[odds-api] requests remaining this month:", remaining);
+
+      const byKey = {};
+      if (Array.isArray(events)){
+        for (const ev of events){
+          const key = gameKey(ev.away_team, ev.home_team);
+          if (!key || !Array.isArray(ev.bookmakers) || !ev.bookmakers.length) continue;
+          // Prefer DraftKings, fall back to first available bookmaker.
+          const book = ev.bookmakers.find(b => b.key === "draftkings") || ev.bookmakers[0];
+          const out = { book: book.title || book.key, bookKey: book.key, lastUpdate: book.last_update };
+
+          for (const market of (book.markets || [])){
+            if (market.key === "spreads"){
+              // outcomes: [{name:"Lakers", point:-3.5, price:-110}, {name:"Nuggets", point:+3.5, price:-110}]
+              const fav = market.outcomes.reduce((a,b) =>
+                (Number(a?.point) ?? 0) < (Number(b?.point) ?? 0) ? a : b, null);
+              if (fav){
+                // ESPN abbrev format ("LAL -3.5") — we don't have the abbreviation here,
+                // so use the mascot from the team name. Frontend swaps to ESPN abbr.
+                out.spreadTeamMascot = teamMascot(fav.name);
+                out.spreadPoint = fav.point;
+              }
+            } else if (market.key === "totals"){
+              const overOutcome = market.outcomes.find(o => /over/i.test(o.name));
+              if (overOutcome) out.total = overOutcome.point;
+            }
+          }
+          byKey[key] = out;
+        }
+      }
+      const cacheObj = { at: Date.now(), byKey };
+      liveOddsApiCache = cacheObj;
+      lsSet(LS_LIVEODDS, cacheObj);
+      if (DEBUG_LEADERS) console.log("[odds-api] parsed", Object.keys(byKey).length, "games");
+      return byKey;
+    }catch(e){
+      if (DEBUG_LEADERS) console.log("[odds-api] exception", e);
+      return {};
+    }
+  })().finally(() => { liveOddsLoadPromise = null; });
+
+  return liveOddsLoadPromise;
+}
+
+/* ===== League-wide injuries =====
+   ESPN exposes ALL NBA injuries from a single web-API endpoint:
+     site.web.api.espn.com/apis/common/v3/sports/basketball/nba/injuries
+   That host is CORS-blocked, so we go through /api/espn-web/. ONE proxied
+   request gives us injuries for every team — much cheaper than per-team
+   fetches and dramatically simpler. We cache the parsed result for 30 min in
+   localStorage. Result is a map keyed by team id: { teamId: [{name,pos,status}] }
+*/
+const LS_INJURIES   = "pb_injuries_v2";  // bump version → discard old cache
+const INJURY_TTL_MS = 30 * 60 * 1000;
+let injuriesByTeam = (function loadInjLs(){
+  const raw = lsGet(LS_INJURIES, null);
+  if (raw && raw.at && (Date.now() - raw.at) < INJURY_TTL_MS && raw.byTeam) return raw.byTeam;
+  return null;
+})();
+let injuriesLoadPromise = null;
+
+async function loadAllInjuries(){
+  // Return cached map if fresh.
+  if (injuriesByTeam) return injuriesByTeam;
+  // Dedupe in-flight calls.
+  if (injuriesLoadPromise) return injuriesLoadPromise;
+
+  injuriesLoadPromise = (async () => {
+    const url = "/api/espn-web/apis/common/v3/sports/basketball/nba/injuries";
+    try{
+      const res = await fetch(url);
+      if (!res.ok){
+        if (DEBUG_LEADERS) console.log("[injuries] HTTP", res.status);
+        injuriesByTeam = {};
+        return injuriesByTeam;
+      }
+      const data = await res.json();
+      const map = {};
+
+      // Common shape: { injuries: [ { team:{id,...}, injuries:[{athlete,status,...}] }, ... ] }
+      // Alternative flat shape: { injuries: [ { team:{...}, athlete:{...}, status, ... } ] }
+      const top = Array.isArray(data?.injuries) ? data.injuries : [];
+      if (DEBUG_LEADERS) console.log("[injuries] top length:", top.length, "sample:", top[0]);
+
+      for (const node of top){
+        const teamId = node?.team?.id || node?.teamId;
+        if (!teamId) continue;
+        if (!map[teamId]) map[teamId] = [];
+
+        // Per-team grouping: node.injuries is an array
+        if (Array.isArray(node.injuries)){
+          for (const inj of node.injuries){
+            const a = inj.athlete || inj.player || {};
+            const status = (inj.status || inj.type?.description || inj.type || "").toString().trim();
+            const name = a.displayName || a.fullName || [a.firstName,a.lastName].filter(Boolean).join(" ");
+            if (name && status){
+              map[teamId].push({
+                name,
+                pos: a.position?.abbreviation || a.position?.name || "",
+                status,
+              });
+            }
+          }
+        }
+        // Flat shape: each node IS an injury directly
+        else if (node.athlete || node.player){
+          const a = node.athlete || node.player || {};
+          const status = (node.status || node.type?.description || node.type || "").toString().trim();
+          const name = a.displayName || a.fullName || [a.firstName,a.lastName].filter(Boolean).join(" ");
+          if (name && status){
+            map[teamId].push({
+              name,
+              pos: a.position?.abbreviation || a.position?.name || "",
+              status,
+            });
+          }
+        }
+      }
+
+      injuriesByTeam = map;
+      lsSet(LS_INJURIES, { at: Date.now(), byTeam: map });
+      if (DEBUG_LEADERS) {
+        const teams = Object.keys(map).length;
+        const total = Object.values(map).reduce((s,a)=>s+a.length, 0);
+        console.log("[injuries] parsed:", teams, "teams,", total, "injuries");
+      }
+      return map;
+    }catch(e){
+      if (DEBUG_LEADERS) console.log("[injuries] exception", e);
+      injuriesByTeam = {};
+      return injuriesByTeam;
+    }
+  })().finally(() => { injuriesLoadPromise = null; });
+
+  return injuriesLoadPromise;
+}
+
+// Status hierarchy (lower = more impactful → shown first)
+const INJ_RANK = { "out":0, "suspended":0, "doubtful":1, "questionable":2, "day-to-day":3, "day to day":3 };
+function injKey(s){ return INJ_RANK[(s||"").toLowerCase()] ?? 99; }
+function injCssClass(s){
+  const k = (s||"").toLowerCase();
+  if (k === "out" || k === "suspended") return "out";
+  if (k === "doubtful") return "doubtful";
+  if (k === "questionable") return "questionable";
+  if (k === "day-to-day" || k === "day to day") return "daytoday";
+  return "daytoday";
+}
+
+function renderInjuryPills(list, abbr){
+  // Top 2 most-impactful injuries per team. Skip "Probable".
+  const filtered = list.filter(x => injKey(x.status) < 99)
+                        .sort((a,b)=> injKey(a.status) - injKey(b.status))
+                        .slice(0, 2);
+  if (!filtered.length) return "";
+  return filtered.map(inj => {
+    const cls = injCssClass(inj.status);
+    const status = inj.status.replace(/-/g," ");
+    return `<span class="pill injury" title="${escAttr(abbr+": "+inj.name+" — "+status)}">
+      <span class="inj-status ${cls}">${escAttr(status.toUpperCase())}</span>
+      ${escAttr(abbr ? abbr+": " : "")}${escAttr(inj.name)}${inj.pos?` (${escAttr(inj.pos)})`:""}
+    </span>`;
+  }).join("");
+}
+
+async function enrichGames(){
+  const cards = Array.from(document.querySelectorAll(".game[data-event-id]"));
+  if (!cards.length) return;
+
+  // 1) Live odds for in-progress games. Only label LIVE when fetchLiveOddsForGame
+  //    actually confirms in-game data (data.isLive === true). If it returns the
+  //    same pregame line ESPN already shows, leave the OPEN label alone — calling
+  //    a stale pregame line "LIVE" is what produced the misleading "Knicks -2.5
+  //    while up 14" display before.
+  const liveCards = cards.filter(c => c.dataset.state === "in");
+  await Promise.all(liveCards.map(async card => {
+    const data = await fetchLiveOddsForGame(card.dataset.eventId, card.dataset.compId);
+    if (!data || !data.isLive) return;  // ← key change: only proceed if truly live
+    const slot = card.querySelector("[data-odds-slot]");
+    const parts = [];
+    if (data.spread) parts.push(escAttr(data.spread));
+    if (data.total != null) parts.push(`O/U ${escAttr(data.total)}`);
+    if (!parts.length) return;
+    if (slot){
+      slot.innerHTML = `<span class="tag live">LIVE</span>${parts.join(" · ")}`;
+    } else {
+      // No pre-game odds were rendered — insert one before the injury slot.
+      const extras = card.querySelector(".game-extras");
+      const injSlot = card.querySelector("[data-injury-slot]");
+      const span = document.createElement("span");
+      span.className = "pill odds";
+      span.setAttribute("data-odds-slot","");
+      span.innerHTML = `<span class="tag live">LIVE</span>${parts.join(" · ")}`;
+      extras?.insertBefore(span, injSlot);
+    }
+  }));
+
+  // 2) Real live odds from The Odds API (DraftKings/FanDuel via our Pages
+  //    Function /api/live-odds). One fetch covers every NBA game on the slate;
+  //    map is keyed by an order-independent mascot pair.
+  //
+  //    This SUPERSEDES the OPEN/PRE/CLOSE label whenever we find a match —
+  //    The Odds API gives us actual current betting lines, including in-game
+  //    moves. If the API is unconfigured (503) or the game isn't on their
+  //    slate, the existing OPEN/PRE/CLOSE pill stays visible.
+  try{
+    const oddsByKey = await loadLiveOddsApi();
+    if (oddsByKey && Object.keys(oddsByKey).length){
+      cards.forEach(card => {
+        const key = gameKey(card.dataset.awayName, card.dataset.homeName);
+        const o   = oddsByKey[key];
+        if (!o) return;
+
+        // Pick the ESPN abbreviation for the favored team by mascot match.
+        const homeMascot = teamMascot(card.dataset.homeName);
+        const awayMascot = teamMascot(card.dataset.awayName);
+        let favAbbr = "";
+        if (o.spreadTeamMascot === homeMascot)      favAbbr = card.dataset.homeAbbr || "";
+        else if (o.spreadTeamMascot === awayMascot) favAbbr = card.dataset.awayAbbr || "";
+
+        const parts = [];
+        if (favAbbr && o.spreadPoint != null){
+          // The Odds API gives a numeric point — "-3.5", "+3.5", or "0".
+          // Format with explicit sign for the favorite side.
+          const pt = Number(o.spreadPoint);
+          const ptStr = pt > 0 ? `+${pt}` : `${pt}`;
+          parts.push(`${favAbbr} ${ptStr}`);
+        } else if (o.spreadPoint != null){
+          // Fallback: no abbrev match, just show the raw number.
+          parts.push(String(o.spreadPoint));
+        }
+        if (o.total != null) parts.push(`O/U ${o.total}`);
+        if (!parts.length) return;
+
+        const isLive = card.dataset.state === "in";
+        const tag    = isLive
+          ? `<span class="tag live">LIVE</span>`
+          : `<span class="tag pre">${card.dataset.state === "post" ? "CLOSE" : "PRE"}</span>`;
+
+        // Build a tooltip showing source + freshness.
+        let tip = o.book || "Sportsbook";
+        if (o.lastUpdate){
+          const ageSec = Math.max(0, Math.round((Date.now() - new Date(o.lastUpdate).getTime())/1000));
+          const ageStr = ageSec < 60 ? `${ageSec}s ago`
+                        : ageSec < 3600 ? `${Math.round(ageSec/60)}m ago`
+                        : `${Math.round(ageSec/3600)}h ago`;
+          tip += ` · updated ${ageStr}`;
+        }
+
+        const html = `${tag}${parts.join(" · ")}`;
+        let slot = card.querySelector("[data-odds-slot]");
+        if (slot){
+          slot.innerHTML = html;
+          slot.setAttribute("title", tip);
+        } else {
+          // No pre-game odds were rendered — insert one before the injury slot.
+          const extras = card.querySelector(".game-extras");
+          const injSlot = card.querySelector("[data-injury-slot]");
+          const span = document.createElement("span");
+          span.className = "pill odds";
+          span.setAttribute("data-odds-slot","");
+          span.setAttribute("title", tip);
+          span.innerHTML = html;
+          extras?.insertBefore(span, injSlot);
+        }
+      });
+    }
+  }catch(e){
+    if (DEBUG_LEADERS) console.log("[odds-api] enrich failed", e);
+  }
+
+  // 3) Injuries — one league-wide fetch returns a teamId→[injuries] map.
+  const byTeam = await loadAllInjuries();
+  cards.forEach(card => {
+    const slot = card.querySelector("[data-injury-slot]");
+    if (!slot) return;
+    const homeHtml = renderInjuryPills(byTeam[card.dataset.homeId]||[], card.dataset.homeAbbr);
+    const awayHtml = renderInjuryPills(byTeam[card.dataset.awayId]||[], card.dataset.awayAbbr);
+    const html = awayHtml + homeHtml;
+    if (html) slot.outerHTML = html;
+    else slot.remove();
+  });
+}
+
+/* ===== News ===== */
+async function loadNews({ silent=false } = {}){
+  const host = document.getElementById("news");
+  if (!silent) host.innerHTML = `<div class="empty">Loading…</div>`;
+  try{
+    const res = await fetch(`${ESPN_NEWS}?limit=8`);
+    const data = await res.json();
+    const items = (data.articles||[]).slice(0,8);
+    if(!items.length){ host.innerHTML = `<div class="empty">No news.</div>`; return; }
+    host.innerHTML = items.map(a=>{
+      const link = a.links?.web?.href || a.links?.mobile?.href || "#";
+      const when = a.published ? new Date(a.published).toLocaleString([], {month:"short",day:"numeric",hour:"numeric",minute:"2-digit"}) : "";
+      return `<div class="news-item">
+        <a href="${link}" target="_blank" rel="noopener">${a.headline||"Untitled"}</a>
+        <div class="news-meta">${when}${a.byline?` · ${a.byline}`:""}</div>
+      </div>`;
+    }).join("");
+  }catch(e){
+    if (!silent) host.innerHTML = `<div class="empty">Couldn't load news.</div>`;
+  }
+}
+
+/* ===== Reddit =====
+   Mobile Safari sometimes gets 403/429 from www.reddit.com — Reddit's CORS &
+   rate limits are inconsistent on mobile UAs. Strategy:
+     1. Try api.reddit.com (alternate host with better CORS behavior).
+     2. Fall back to www.reddit.com .json.
+     3. Fall back to Netlify proxy (only on failure → preserves credits).
+     4. Hydrate from localStorage so a cold mobile load can show *something*
+        immediately while the network attempts run in the background.
+*/
+const LS_REDDIT          = "pb_reddit_v1";
+const REDDIT_CACHE_TTL_MS = 10 * 60 * 1000;  // 10 min
+
+async function fetchRedditFromAny(){
+  // Order matters. The Netlify Function is FIRST because it's the only path
+  // that reliably works on mobile Safari (sets a non-browser UA server-side
+  // and CDN-caches the response). Direct attempts come after as fallbacks
+  // for browsers/networks where they happen to work.
+  const urls = [
+    "/api/reddit-fn?sub=nba&limit=15",
+    "/.netlify/functions/reddit?sub=nba&limit=15",
+    "https://api.reddit.com/r/nba/hot?limit=15",
+    "https://www.reddit.com/r/nba/hot.json?limit=15",
+    "/api/reddit/r/nba/hot.json?limit=15",
+  ];
+  let lastErr = null;
+  for (const url of urls){
+    try{
+      const res = await fetch(url, { headers: { "Accept": "application/json" } });
+      if (!res.ok) { lastErr = new Error("HTTP "+res.status+" "+url); continue; }
+      const data = await res.json();
+      // api.reddit.com returns the same Listing shape, so this works for both.
+      const children = data?.data?.children || [];
+      if (children.length){
+        if (DEBUG_LEADERS) console.log("[reddit] success via", url, "→", children.length, "items");
+        return children;
+      }
+      lastErr = new Error("empty listing from "+url);
+    } catch(e){ lastErr = e; if (DEBUG_LEADERS) console.log("[reddit] fail", url, e); }
+  }
+  throw lastErr || new Error("All reddit endpoints failed");
+}
+
+function renderRedditItems(items, host){
+  if(!items.length){ host.innerHTML = `<div class="empty">No posts.</div>`; return; }
+  host.innerHTML = items.map(p=>{
+    const link = `https://www.reddit.com${p.permalink}`;
+    return `<div class="reddit-item">
+      <a href="${escAttr(link)}" target="_blank" rel="noopener">${escAttr(p.title)}</a>
+      <div class="reddit-meta">▲ ${p.ups?.toLocaleString?.()||p.ups} · ${p.num_comments} comments · r/nba</div>
+    </div>`;
+  }).join("");
+}
+
+async function loadReddit({ silent=false } = {}){
+  const host = document.getElementById("reddit");
+
+  // Show cached immediately (especially helpful on flaky mobile networks).
+  const cached = lsGet(LS_REDDIT, null);
+  if (cached && cached.at && (Date.now() - cached.at) < REDDIT_CACHE_TTL_MS && Array.isArray(cached.items)){
+    renderRedditItems(cached.items, host);
+    if (!silent && (Date.now() - cached.at) < 60_000) return; // very fresh — skip network
+  } else if (!silent){
+    host.innerHTML = `<div class="empty">Loading…</div>`;
+  }
+
+  try{
+    const children = await fetchRedditFromAny();
+    const items = children.map(x=>x.data).filter(p=>!p.stickied).slice(0,10);
+    renderRedditItems(items, host);
+    lsSet(LS_REDDIT, { at: Date.now(), items });
+  }catch(e){
+    if (!cached) {
+      host.innerHTML = `<div class="empty">Couldn't load r/nba right now.</div>`;
+    }
+    // If we did show cached above, leave it — better than an error message.
+    if (DEBUG_LEADERS) console.warn("reddit error", e);
+  }
+}
+
+/* ===== Leaders ===== */
+function setLeadersHeading(src){
+  const h = document.getElementById("leadersHeading");
+  const pre = src==="playoff" ? "Playoff" : (src==="season" ? "Season" : "Playoff");
+  h.textContent = `${pre} Leaders — ${STAT_CFG[currentStat].heading}`;
+}
+
+/**
+ * ESPN byathlete shape:
+ *   entry.categories = [
+ *     { name: "offensive", stats: [ {name:"avgPoints", value:30.2, displayValue:"30.2"}, ... ] },
+ *     { name: "defensive", stats: [ ... ] },
+ *     { name: "general",   stats: [ ... ] }
+ *   ]
+ * We scan every category's stats array for an entry whose .name matches one of targetNames.
+ */
+function findStatValue(entry, targetNames, pathOut){
+  const lowTargets = targetNames.map(t => t.toLowerCase());
+  const cats = entry?.categories;
+  if (!Array.isArray(cats)) return null;
+  for (let ci = 0; ci < cats.length; ci++){
+    const cat = cats[ci];
+    const stats = cat?.stats;
+    if (!Array.isArray(stats)) continue;
+    for (let si = 0; si < stats.length; si++){
+      const s = stats[si];
+      if (!s || typeof s !== "object") continue;
+      const nm = (s.name || s.shortDisplayName || s.abbreviation || "").toLowerCase();
+      if (!nm) continue;
+      if (lowTargets.includes(nm)){
+        let val = (typeof s.value === "number") ? s.value
+                : (typeof s.value === "string" && !isNaN(parseFloat(s.value))) ? parseFloat(s.value)
+                : (typeof s.displayValue === "string" && !isNaN(parseFloat(s.displayValue))) ? parseFloat(s.displayValue)
+                : null;
+        if (val != null){
+          pathOut.path = `.categories[${ci}].stats[${si}] (name="${s.name}")`;
+          return val;
+        }
+      }
+    }
+  }
+  return null;
+}
+
+// For debugging: dump every stat name found inside the first entry's categories.
+function dumpStatNames(entry){
+  const cats = entry?.categories;
+  if (!Array.isArray(cats)) { console.log("[leaders] no categories array"); }
+  else cats.forEach((cat, ci) => {
+    const names = (cat?.stats||[]).map(s => s?.name).filter(Boolean);
+    console.log(`[leaders] entry.categories[${ci}] name="${cat?.name}" stat names:`, names, "raw:", cat?.stats);
+  });
+  // Sniff the athlete sub-object in case stats live there.
+  const a = entry?.athlete;
+  if (a && typeof a === "object"){
+    console.log("[leaders] entry.athlete keys:", Object.keys(a));
+    if (a.statistics) console.log("[leaders] entry.athlete.statistics:", a.statistics);
+    if (a.stats)      console.log("[leaders] entry.athlete.stats:", a.stats);
+    if (a.categories) console.log("[leaders] entry.athlete.categories:", a.categories);
+  }
+}
+
+// When an athlete's categories[].stats is an array of plain numbers (not {name,value} objects),
+// the stat-name order is defined at the TOP level: data.categories[].names or .labels.
+// Build a map so we can still resolve targeted stat names to index positions.
+function buildTopLevelStatIndex(data){
+  const out = {};  // { "avgPoints": {ci, si}, ... }
+  const cats = data?.categories;
+  if (!Array.isArray(cats)) return out;
+  cats.forEach((cat, ci) => {
+    const names = cat?.names || cat?.fields || cat?.abbreviations || [];
+    names.forEach((nm, si) => {
+      if (typeof nm === "string") out[nm.toLowerCase()] = { ci, si, catName: cat.name };
+    });
+  });
+  return out;
+}
+
+function getAthleteName(entry){
+  return entry?.athlete?.displayName
+      || entry?.athlete?.fullName
+      || entry?.displayName
+      || entry?.fullName
+      || entry?.name
+      || "Player";
+}
+
+// Extract ESPN athlete id from a $ref URL like:
+//   http://sports.core.api.espn.com/v2/sports/basketball/leagues/nba/seasons/2026/athletes/3945274?lang=en&region=us
+function athleteIdFromRef(ref){
+  if (typeof ref !== "string") return null;
+  const m = ref.match(/\/athletes\/(\d+)/);
+  return m ? m[1] : null;
+}
+
+async function fetchAthleteName(ref){
+  const id = athleteIdFromRef(ref);
+  if (!id) return "Player";
+  if (athleteNameCache[id]) return athleteNameCache[id];
+
+  // sports.core.api.espn.com is CORS-enabled over https — fetch DIRECT (no proxy = no Netlify cost).
+  // The $ref ESPN gives us is http; force https to avoid mixed-content blocking from our https site.
+  let directUrl = (typeof ref === "string")
+    ? ref.replace(/^http:\/\//i, "https://")
+    : `https://sports.core.api.espn.com/v2/sports/basketball/leagues/nba/athletes/${id}?lang=en&region=us`;
+  if (!/^https:\/\/sports\.core\.api\.espn\.com/i.test(directUrl)){
+    directUrl = `https://sports.core.api.espn.com/v2/sports/basketball/leagues/nba/athletes/${id}?lang=en&region=us`;
+  }
+
+  // Fallback to proxy if direct fails (some browsers / network configs may block).
+  const proxyUrl = directUrl.replace(/^https:\/\/sports\.core\.api\.espn\.com/i, "/api/espn-core");
+
+  for (const url of [directUrl, proxyUrl]){
+    try{
+      const res = await fetch(url);
+      if (res.ok){
+        const d = await res.json();
+        const name = d?.displayName
+                  || d?.fullName
+                  || [d?.firstName, d?.lastName].filter(Boolean).join(" ").trim()
+                  || d?.shortName
+                  || d?.name
+                  || `#${id}`;
+        athleteNameCache[id] = name;
+        return name;
+      } else if (DEBUG_LEADERS){
+        console.log(`[leaders] athlete fetch ${res.status}`, url);
+      }
+    }catch(e){
+      if (DEBUG_LEADERS) console.log(`[leaders] athlete fetch exception`, e, url);
+      // direct fetch may CORS-fail; loop falls through to proxy
+    }
+  }
+  athleteNameCache[id] = `#${id}`;
+  return athleteNameCache[id];
+}
+
+// Find the category in a core leaders payload that matches a STAT_CFG entry.
+function pickLeaderCategory(cats, cfg){
+  return cats.find(c => {
+    const n  = (c.name || "").toLowerCase();
+    const dn = (c.displayName || "").toLowerCase();
+    return cfg.coreNames.some(x => x === n) || cfg.displayMatches.some(x => dn.includes(x));
+  });
+}
+
+// Single in-flight promise for the leaders fetch — prevents tab clicks during cold load
+// from triggering parallel fetches.
+let leadersLoadPromise = null;
+
+async function loadLeaders({ silent=false } = {}){
+  // Update heading right away so tab toggles feel responsive
+  setLeadersHeading(leadersCache[currentStat]?.source || "playoff");
+
+  // Fast path: cache hit for this stat (in-memory, hydrated from localStorage).
+  const cached = leadersCache[currentStat];
+  if (cached && (Date.now() - cached.at) < LEADERS_CACHE_TTL_MS){
+    renderLeaderRows(cached.rows, cached.source);
+    return;
+  }
+
+  // Cold load: fetch ONCE and populate all three stats. Reuse in-flight promise on tab clicks.
+  if (!silent) document.getElementById("leaders").innerHTML = `<div class="empty">Loading…</div>`;
+  if (!leadersLoadPromise) leadersLoadPromise = fetchAllLeadersOnce().finally(() => { leadersLoadPromise = null; });
+  await leadersLoadPromise;
+
+  const after = leadersCache[currentStat];
+  if (after && after.rows) renderLeaderRows(after.rows, after.source);
+  else document.getElementById("leaders").innerHTML =
+    `<div class="empty">Leader data unavailable right now. <a href="/api/diag" target="_blank" rel="noopener" style="color:#9ec5ff">Run diagnostics</a></div>`;
+}
+
+async function fetchAllLeadersOnce(){
+  const now = new Date();
+  const yearNow  = now.getFullYear();
+  const yearPrev = yearNow - 1;
+  const combos = [
+    { year:yearNow,  type:3, label:"playoff" },
+    { year:yearPrev, type:3, label:"playoff" },
+    { year:yearNow,  type:2, label:"season"  },
+    { year:yearPrev, type:2, label:"season"  },
+  ];
+
+  for (const combo of combos){
+    const url = `/api/espn-core/v2/sports/basketball/leagues/nba/seasons/${combo.year}/types/${combo.type}/leaders`;
+    try{
+      const res = await fetch(url);
+      if (!res.ok){
+        if (DEBUG_LEADERS) console.log(`[leaders] core fetch failed`, res.status, combo, url);
+        continue;
+      }
+      const data = await res.json();
+      const cats = data?.categories || [];
+      if (!cats.length) continue;
+
+      // Build raw rows for each stat from this single payload.
+      const rawByStat = {};
+      let anyMatched = false;
+      for (const stat of Object.keys(STAT_CFG)){
+        const cat = pickLeaderCategory(cats, STAT_CFG[stat]);
+        if (!cat || !Array.isArray(cat.leaders) || !cat.leaders.length) continue;
+        const raw = cat.leaders.slice(0, 10).map(l => ({
+          val: (typeof l.value === "number") ? l.value : parseFloat(l.displayValue || l.value || "0"),
+          ref: l.athlete?.$ref || "",
+        })).filter(r => Number.isFinite(r.val) && r.ref);
+        if (raw.length){ rawByStat[stat] = raw; anyMatched = true; }
+      }
+      if (!anyMatched) continue;
+
+      // Dereference athlete names ONCE across all stats (cache dedupes overlapping players).
+      const allRefs = Array.from(new Set(Object.values(rawByStat).flat().map(r => r.ref)));
+      await Promise.all(allRefs.map(ref => fetchAthleteName(ref)));
+      persistNames();
+
+      // Now build rows with names and stuff each stat into the cache.
+      for (const stat of Object.keys(rawByStat)){
+        const rows = rawByStat[stat].map(r => ({
+          name: athleteNameCache[athleteIdFromRef(r.ref)] || "Player",
+          val: r.val,
+        }));
+        leadersCache[stat] = { at: Date.now(), rows, source: combo.label };
+      }
+      persistLeaders();
+      return;  // success — don't try further combos
+    }catch(e){
+      if (DEBUG_LEADERS) console.log(`[leaders] core exception`, e, url);
+    }
+  }
+}
+
+function renderLeaderRows(rows, src){
+  setLeadersHeading(src);
+  const host = document.getElementById("leaders");
+  if (!rows || !rows.length){
+    host.innerHTML = `<div class="empty">No leaders.</div>`;
+    return;
+  }
+  host.innerHTML = rows.map((r,i)=>`
+    <div class="leader-row">
+      <div class="leader-rank">${i+1}.</div>
+      <div class="leader-name">${r.name}</div>
+      <div class="leader-val">${(Math.round(r.val*10)/10).toFixed(1)}</div>
+    </div>
+  `).join("");
+}
+
+/* ===== Tabs ===== */
+// Stat tabs (Points / Rebounds / Assists) — scoped via [data-stat]
+document.querySelectorAll(".leader-tab[data-stat]").forEach(btn=>{
+  btn.addEventListener("click", ()=>{
+    document.querySelectorAll(".leader-tab[data-stat]").forEach(b=>b.classList.remove("active"));
+    btn.classList.add("active");
+    currentStat = btn.dataset.stat;
+    loadLeaders();
+  });
+});
+
+// News/Reddit feed tabs — scoped via [data-feed]
+document.querySelectorAll(".leader-tab[data-feed]").forEach(btn=>{
+  btn.addEventListener("click", ()=>{
+    document.querySelectorAll(".leader-tab[data-feed]").forEach(b=>b.classList.remove("active"));
+    btn.classList.add("active");
+    const showNews = btn.dataset.feed === "news";
+    document.getElementById("news").style.display   = showNews ? "" : "none";
+    document.getElementById("reddit").style.display = showNews ? "none" : "";
+  });
+});
+
+/* ===== Date nav ===== */
+function clampToWindow(d){
+  const today = new Date();
+  const diff = dayDiff(d, today);
+  if (diff >  DATE_WINDOW_DAYS) return new Date(today.getTime() +  DATE_WINDOW_DAYS*86400000);
+  if (diff < -DATE_WINDOW_DAYS) return new Date(today.getTime() + -DATE_WINDOW_DAYS*86400000);
+  return d;
+}
+document.getElementById("prevDate").addEventListener("click", ()=>{
+  selectedDate = clampToWindow(new Date(selectedDate.getTime() - 86400000));
+  loadGames();
+});
+document.getElementById("nextDate").addEventListener("click", ()=>{
+  selectedDate = clampToWindow(new Date(selectedDate.getTime() + 86400000));
+  loadGames();
+});
+document.getElementById("todayBtn").addEventListener("click", ()=>{
+  selectedDate = new Date();
+  loadGames();
+});
+document.getElementById("manualRefreshBtn").addEventListener("click", ()=>{
+  // Clear leaders cache (memory + localStorage) so refresh really refreshes.
+  for (const k in leadersCache) delete leadersCache[k];
+  try { localStorage.removeItem(LS_LEADERS); } catch(e){}
+  loadAll();
+});
+
+/* ===== Auto-refresh (conservative) ===== */
+function maybeRefresh(){
+  if (document.hidden) return;
+  if (userIsIdle()) return;
+  if (!anyLiveGames) return;
+  if (dayDiff(selectedDate, new Date()) !== 0) return;
+  loadGames({ silent: true });
+}
+function scheduleAutoRefresh(){
+  if (refreshTimer) clearInterval(refreshTimer);
+  refreshTimer = setInterval(maybeRefresh, AUTO_REFRESH_MS);
+}
+
+/* ===== Boot ===== */
+function loadAll(){
+  loadGames();
+  loadNews();
+  loadReddit();
+  loadLeaders();
+}
+loadAll();
+scheduleAutoRefresh();
+</script>
+</body>
+</html>
