@@ -14,13 +14,31 @@ export default async function handler(request) {
   const wantJson = url.searchParams.has("json");
   const hasOddsKey = !!(typeof process !== "undefined" && process.env && process.env.THE_ODDS_API_KEY);
 
-  if (wantJson) return jsonReport(hasOddsKey);
+  if (wantJson) return jsonReport(hasOddsKey, request);
   return htmlShell(hasOddsKey);
 }
 
 /* ───────────── JSON report ───────────── */
 
-async function jsonReport(hasOddsKey) {
+async function jsonReport(hasOddsKey, request) {
+  // Wrap the entire report in a try/catch so any unexpected error still returns
+  // valid JSON to the client (instead of a 500 with no body, which makes the
+  // dashboard render "did not match the expected pattern" from JSON.parse).
+  try {
+    return await buildJsonReport(hasOddsKey, request);
+  } catch (e) {
+    return new Response(
+      JSON.stringify({
+        error: "diag_internal_error",
+        message: errString(e),
+        deployedAt: new Date().toISOString(),
+      }, null, 2),
+      { headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" } }
+    );
+  }
+}
+
+async function buildJsonReport(hasOddsKey, request) {
   const browserHeaders = {
     "Accept": "application/json",
     "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_4) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15",
@@ -105,22 +123,31 @@ async function jsonReport(hasOddsKey) {
   }
 
   const SAMPLE_TEAM_ID = "13"; // Lakers — used purely to verify the route is alive.
+  // Derive our own origin defensively. If anything's odd we fall back to a
+  // relative path; fetch() in Edge requires absolute URLs but we'd rather have
+  // one bad row than a 500 that breaks the whole dashboard.
+  let selfOrigin = "";
+  try { selfOrigin = new URL(request.url).origin; } catch (_) {}
 
   const [odds, leaders, leadersProxy, injSiteV2, injSiteWeb, injCore, injProxy, scoreboard] = await Promise.all([
     pingOdds(),
     ping("ESPN core (leaders, direct)",
       "https://sports.core.api.espn.com/v2/sports/basketball/leagues/nba/seasons/2026/types/3/leaders"),
     // Same path, through the Vercel catch-all proxy — verifies routing is intact.
-    ping("ESPN core (leaders, via proxy)",
-      `${new URL(request.url).origin}/api/espn-core/v2/sports/basketball/leagues/nba/seasons/2026/types/3/leaders`),
+    selfOrigin
+      ? ping("ESPN core (leaders, via proxy)",
+          `${selfOrigin}/api/espn-core/v2/sports/basketball/leagues/nba/seasons/2026/types/3/leaders`)
+      : Promise.resolve({ label: "ESPN core (leaders, via proxy)", ok: false, error: "could not derive own origin" }),
     ping("Injuries — site v2 (per-team)",
       `https://site.api.espn.com/apis/site/v2/sports/basketball/nba/teams/${SAMPLE_TEAM_ID}/injuries`),
     ping("Injuries — site web common v3 (per-team)",
       `https://site.web.api.espn.com/apis/common/v3/sports/basketball/nba/teams/${SAMPLE_TEAM_ID}/injuries`),
     ping("Injuries — core v2 (per-team)",
       `https://sports.core.api.espn.com/v2/sports/basketball/leagues/nba/teams/${SAMPLE_TEAM_ID}/injuries?limit=50`),
-    ping("Injuries — site v2 via proxy",
-      `${new URL(request.url).origin}/api/espn-site/apis/site/v2/sports/basketball/nba/teams/${SAMPLE_TEAM_ID}/injuries`),
+    selfOrigin
+      ? ping("Injuries — site v2 via proxy",
+          `${selfOrigin}/api/espn-site/apis/site/v2/sports/basketball/nba/teams/${SAMPLE_TEAM_ID}/injuries`)
+      : Promise.resolve({ label: "Injuries — site v2 via proxy", ok: false, error: "could not derive own origin" }),
     ping("ESPN site (scoreboard)",
       "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard"),
   ]);
