@@ -625,97 +625,79 @@ async function loadLiveOddsApi(){
   return liveOddsLoadPromise;
 }
 
-/* ===== League-wide injuries =====
-   ESPN exposes ALL NBA injuries from a single web-API endpoint:
-     site.web.api.espn.com/apis/common/v3/sports/basketball/nba/injuries
-   That host is CORS-blocked, so we go through /api/espn-web/. ONE proxied
-   request gives us injuries for every team — much cheaper than per-team
-   fetches and dramatically simpler. We cache the parsed result for 30 min in
-   localStorage. Result is a map keyed by team id: { teamId: [{name,pos,status}] }
+/* ===== Per-team injuries =====
+   ESPN's old league-wide endpoint (site.web.api.espn.com/.../nba/injuries)
+   was retired and now returns 404. New strategy: fetch per-team injuries
+   from site.api.espn.com — same host as the news feed, so it's CORS-enabled
+   and we don't need the proxy.
+
+     https://site.api.espn.com/apis/site/v2/sports/basketball/nba/teams/{teamId}/injuries
+
+   In the playoffs there are only ~16 teams that could possibly appear on
+   the scoreboard — usually fewer once series end — so the parallel fan-out
+   is cheap. We cache each team's list for 30 min in localStorage so a
+   refresh or stat-tab toggle costs zero network.
 */
-const LS_INJURIES   = "pb_injuries_v2";  // bump version → discard old cache
-const INJURY_TTL_MS = 30 * 60 * 1000;
-let injuriesByTeam = (function loadInjLs(){
-  const raw = lsGet(LS_INJURIES, null);
-  if (raw && raw.at && (Date.now() - raw.at) < INJURY_TTL_MS && raw.byTeam) return raw.byTeam;
-  return null;
-})();
-let injuriesLoadPromise = null;
+const LS_INJURIES_V3 = "pb_injuries_v3";   // bump version → discard older shapes
+const INJURY_TTL_MS  = 30 * 60 * 1000;
+const injuryFetchInFlight = {};            // { teamId: Promise } — dedupe parallel callers
 
-async function loadAllInjuries(){
-  // Return cached map if fresh.
-  if (injuriesByTeam) return injuriesByTeam;
-  // Dedupe in-flight calls.
-  if (injuriesLoadPromise) return injuriesLoadPromise;
+async function loadAllInjuries(teamIds = []){
+  const ids = Array.from(new Set((teamIds || []).filter(Boolean).map(String)));
+  if (!ids.length) return {};
 
-  injuriesLoadPromise = (async () => {
-    const url = "/api/espn-web/apis/common/v3/sports/basketball/nba/injuries";
-    try{
-      const res = await fetch(url);
-      if (!res.ok){
-        if (DEBUG_LEADERS) console.log("[injuries] HTTP", res.status);
-        injuriesByTeam = {};
-        return injuriesByTeam;
-      }
-      const data = await res.json();
-      const map = {};
+  const now = Date.now();
+  const cache = lsGet(LS_INJURIES_V3, {}) || {};
 
-      // Common shape: { injuries: [ { team:{id,...}, injuries:[{athlete,status,...}] }, ... ] }
-      // Alternative flat shape: { injuries: [ { team:{...}, athlete:{...}, status, ... } ] }
-      const top = Array.isArray(data?.injuries) ? data.injuries : [];
-      if (DEBUG_LEADERS) console.log("[injuries] top length:", top.length, "sample:", top[0]);
+  await Promise.all(ids.map(async teamId => {
+    const c = cache[teamId];
+    if (c && c.at && (now - c.at) < INJURY_TTL_MS) return;        // fresh, skip
+    if (injuryFetchInFlight[teamId]) return injuryFetchInFlight[teamId];
 
-      for (const node of top){
-        const teamId = node?.team?.id || node?.teamId;
-        if (!teamId) continue;
-        if (!map[teamId]) map[teamId] = [];
-
-        // Per-team grouping: node.injuries is an array
-        if (Array.isArray(node.injuries)){
-          for (const inj of node.injuries){
-            const a = inj.athlete || inj.player || {};
-            const status = (inj.status || inj.type?.description || inj.type || "").toString().trim();
-            const name = a.displayName || a.fullName || [a.firstName,a.lastName].filter(Boolean).join(" ");
-            if (name && status){
-              map[teamId].push({
-                name,
-                pos: a.position?.abbreviation || a.position?.name || "",
-                status,
-              });
-            }
-          }
+    injuryFetchInFlight[teamId] = (async () => {
+      const url = `https://site.api.espn.com/apis/site/v2/sports/basketball/nba/teams/${teamId}/injuries`;
+      try{
+        const res = await fetch(url);
+        if (!res.ok){
+          if (DEBUG_LEADERS) console.log("[injuries]", teamId, "HTTP", res.status);
+          cache[teamId] = { at: now, list: [] };
+          return;
         }
-        // Flat shape: each node IS an injury directly
-        else if (node.athlete || node.player){
-          const a = node.athlete || node.player || {};
-          const status = (node.status || node.type?.description || node.type || "").toString().trim();
+        const data = await res.json();
+
+        // Per-team shape:
+        //   { team:{...}, injuries: [{ athlete:{...}, status, type:{description}, ...}] }
+        const items = Array.isArray(data?.injuries) ? data.injuries : [];
+        const list = [];
+        for (const inj of items){
+          const a = inj.athlete || inj.player || {};
+          const status = (inj.status || inj.type?.description || inj.type || "").toString().trim();
           const name = a.displayName || a.fullName || [a.firstName,a.lastName].filter(Boolean).join(" ");
           if (name && status){
-            map[teamId].push({
+            list.push({
               name,
               pos: a.position?.abbreviation || a.position?.name || "",
               status,
             });
           }
         }
+        cache[teamId] = { at: now, list };
+        if (DEBUG_LEADERS) console.log("[injuries]", teamId, "→", list.length, "injuries");
+      }catch(e){
+        if (DEBUG_LEADERS) console.log("[injuries]", teamId, "exception", e);
+        cache[teamId] = { at: now, list: [] };
       }
+    })().finally(() => { delete injuryFetchInFlight[teamId]; });
 
-      injuriesByTeam = map;
-      lsSet(LS_INJURIES, { at: Date.now(), byTeam: map });
-      if (DEBUG_LEADERS) {
-        const teams = Object.keys(map).length;
-        const total = Object.values(map).reduce((s,a)=>s+a.length, 0);
-        console.log("[injuries] parsed:", teams, "teams,", total, "injuries");
-      }
-      return map;
-    }catch(e){
-      if (DEBUG_LEADERS) console.log("[injuries] exception", e);
-      injuriesByTeam = {};
-      return injuriesByTeam;
-    }
-  })().finally(() => { injuriesLoadPromise = null; });
+    return injuryFetchInFlight[teamId];
+  }));
 
-  return injuriesLoadPromise;
+  lsSet(LS_INJURIES_V3, cache);
+
+  // Build the return map keyed by team ID.
+  const map = {};
+  for (const id of ids) map[id] = (cache[id] && cache[id].list) || [];
+  return map;
 }
 
 // Status hierarchy (lower = more impactful → shown first)
@@ -852,8 +834,10 @@ async function enrichGames(){
     if (DEBUG_LEADERS) console.log("[odds-api] enrich failed", e);
   }
 
-  // 3) Injuries — one league-wide fetch returns a teamId→[injuries] map.
-  const byTeam = await loadAllInjuries();
+  // 3) Injuries — fan out per-team for the teams visible on this scoreboard.
+  //    ESPN's old league-wide endpoint returned 404; per-team is the new path.
+  const teamIds = cards.flatMap(c => [c.dataset.homeId, c.dataset.awayId]).filter(Boolean);
+  const byTeam = await loadAllInjuries(teamIds);
   cards.forEach(card => {
     const slot = card.querySelector("[data-injury-slot]");
     if (!slot) return;

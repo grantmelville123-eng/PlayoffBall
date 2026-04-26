@@ -82,7 +82,9 @@ async function jsonReport(hasOddsKey) {
   const [odds, leaders, injuries, scoreboard] = await Promise.all([
     pingOdds(),
     ping("ESPN core (leaders)",       "https://sports.core.api.espn.com/v2/sports/basketball/leagues/nba/seasons/2026/types/3/leaders"),
-    ping("ESPN web (injuries)",       "https://site.web.api.espn.com/apis/common/v3/sports/basketball/nba/injuries"),
+    // Per-team URL — pinged for the Lakers (id=13) just to verify the route is alive.
+    // The frontend fans out across all visible teams.
+    ping("ESPN site (injuries, sample team)", "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/teams/13/injuries"),
     ping("ESPN site (scoreboard)",    "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard"),
   ]);
 
