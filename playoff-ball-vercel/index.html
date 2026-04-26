@@ -1153,10 +1153,16 @@ async function fetchRedditFromAny(){
 function renderRedditItems(items, host){
   if(!items.length){ host.innerHTML = `<div class="empty">No posts.</div>`; return; }
   host.innerHTML = items.map(p=>{
-    const link = `https://www.reddit.com${p.permalink}`;
+    // permalink may be relative (/r/nba/...) or absolute (from RSS source).
+    const link = p.permalink.startsWith("http") ? p.permalink : `https://www.reddit.com${p.permalink}`;
+    // RSS fallback omits upvote/comment counts — only show what we have.
+    const metaParts = [];
+    if (p.ups != null) metaParts.push(`▲ ${p.ups?.toLocaleString?.()||p.ups}`);
+    if (p.num_comments != null) metaParts.push(`${p.num_comments} comments`);
+    metaParts.push("r/nba");
     return `<div class="reddit-item">
       <a href="${escAttr(link)}" target="_blank" rel="noopener">${escAttr(p.title)}</a>
-      <div class="reddit-meta">▲ ${p.ups?.toLocaleString?.()||p.ups} · ${p.num_comments} comments · r/nba</div>
+      <div class="reddit-meta">${metaParts.join(" · ")}</div>
     </div>`;
   }).join("");
 }
