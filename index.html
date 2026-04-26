@@ -778,6 +778,7 @@ async function loadAllInjuries(teamIds = []){
           if (DEBUG_LEADERS) console.log("[injuries]", teamId, "→", parsed.length, "from", url);
           if (parsed.length){
             list = parsed;
+            if (DEBUG_LEADERS) console.log("[injuries]", teamId, "statuses:", parsed.map(p => p.status));
             break;
           }
         }catch(e){
@@ -798,29 +799,50 @@ async function loadAllInjuries(teamIds = []){
   return map;
 }
 
-// Status hierarchy (lower = more impactful → shown first)
-const INJ_RANK = { "out":0, "suspended":0, "doubtful":1, "questionable":2, "day-to-day":3, "day to day":3 };
-function injKey(s){ return INJ_RANK[(s||"").toLowerCase()] ?? 99; }
+// Status hierarchy (lower = more impactful → shown first).
+// Substring match so we handle ESPN's varied wording: "Out", "Out for season",
+// "Day-To-Day - Knee Sprain", "Game-Time Decision", etc.
+function injKey(s){
+  const k = (s || "").toString().toLowerCase();
+  if (!k) return 99;
+  if (k.includes("suspend"))    return 0;
+  if (k.includes("out"))        return 0;
+  if (k.includes("doubtful"))   return 1;
+  if (k.includes("questionab")) return 2;
+  if (k.includes("day"))        return 3;   // covers "day-to-day", "day to day"
+  if (k.includes("game"))       return 3;   // "game-time decision"
+  if (k.includes("probable"))   return 4;
+  return 5;                                  // any other non-empty status — still show
+}
 function injCssClass(s){
-  const k = (s||"").toLowerCase();
-  if (k === "out" || k === "suspended") return "out";
-  if (k === "doubtful") return "doubtful";
-  if (k === "questionable") return "questionable";
-  if (k === "day-to-day" || k === "day to day") return "daytoday";
+  const k = (s || "").toString().toLowerCase();
+  if (k.includes("suspend") || k.includes("out")) return "out";
+  if (k.includes("doubtful"))                     return "doubtful";
+  if (k.includes("questionab"))                   return "questionable";
   return "daytoday";
+}
+// Some ESPN status strings include the body part — "Day-To-Day - Knee" — we
+// want only the leading status word(s) on the pill itself.
+function injShortStatus(s){
+  const t = (s || "").toString().trim();
+  // Cut at " - " (most common ESPN separator) or any em/en dash
+  const m = t.split(/\s[-–—]\s/);
+  return (m[0] || t).trim();
 }
 
 function renderInjuryPills(list, abbr){
-  // Top 2 most-impactful injuries per team. Skip "Probable".
-  const filtered = list.filter(x => injKey(x.status) < 99)
-                        .sort((a,b)=> injKey(a.status) - injKey(b.status))
-                        .slice(0, 2);
+  // Top 2 most-impactful injuries per team. Any non-empty status counts;
+  // "Probable" sorts last but still renders if there's room.
+  const filtered = (list || []).filter(x => x && x.status && x.status.toString().trim())
+                                .sort((a,b)=> injKey(a.status) - injKey(b.status))
+                                .slice(0, 2);
   if (!filtered.length) return "";
   return filtered.map(inj => {
-    const cls = injCssClass(inj.status);
-    const status = inj.status.replace(/-/g," ");
-    return `<span class="pill injury" title="${escAttr(abbr+": "+inj.name+" — "+status)}">
-      <span class="inj-status ${cls}">${escAttr(status.toUpperCase())}</span>
+    const cls    = injCssClass(inj.status);
+    const short  = injShortStatus(inj.status).replace(/-/g," ");
+    const tipSt  = inj.status.replace(/-/g," ");
+    return `<span class="pill injury" title="${escAttr(abbr+": "+inj.name+" — "+tipSt)}">
+      <span class="inj-status ${cls}">${escAttr(short.toUpperCase())}</span>
       ${escAttr(abbr ? abbr+": " : "")}${escAttr(inj.name)}${inj.pos?` (${escAttr(inj.pos)})`:""}
     </span>`;
   }).join("");
