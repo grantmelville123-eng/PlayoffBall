@@ -110,6 +110,46 @@
   .pill.odds  { color:#cfd6e0; }
   .pill.pred  { color:#cfd6e0; border-color: rgba(255,179,3,0.35); }
   .pill.pred strong{ color: var(--accent2); }
+  /* Pick probability bar — full-width inside .game-extras */
+  .pick-bar{
+    flex:1 0 100%;
+    display:flex; flex-direction:column; gap:4px;
+    margin-top:2px;
+  }
+  .pick-bar-track{
+    display:flex; height:8px; border-radius:6px; overflow:hidden;
+    background:rgba(255,255,255,0.04);
+    border:1px solid var(--line);
+  }
+  .pick-bar-away{
+    background:linear-gradient(90deg, rgba(154,165,177,0.45), rgba(154,165,177,0.65));
+    transition:flex 0.4s ease;
+  }
+  .pick-bar-home{
+    background:linear-gradient(90deg, rgba(154,165,177,0.65), rgba(154,165,177,0.45));
+    transition:flex 0.4s ease;
+  }
+  .pick-bar-away.picked{
+    background:linear-gradient(90deg, rgba(255,179,3,0.55), rgba(255,179,3,0.85));
+    box-shadow: inset 0 0 8px rgba(255,179,3,0.35);
+  }
+  .pick-bar-home.picked{
+    background:linear-gradient(90deg, rgba(255,179,3,0.85), rgba(255,179,3,0.55));
+    box-shadow: inset 0 0 8px rgba(255,179,3,0.35);
+  }
+  .pick-bar-labels{
+    display:flex; justify-content:space-between;
+    font-size:11px; color:var(--mute);
+  }
+  .pick-bar-label{ display:inline-flex; align-items:center; gap:6px; }
+  .pick-bar-label.right{ text-align:right; }
+  .pick-bar-label strong{ color:var(--text); font-weight:700; }
+  .pick-bar-label.picked strong{ color:var(--accent2); }
+  .pick-mark{
+    font-size:9px; font-weight:800; letter-spacing:.5px;
+    background:var(--accent2); color:#111;
+    padding:1px 5px; border-radius:3px;
+  }
   /* Tiny LIVE/PRE tag inside the odds pill */
   .pill .tag{
     display:inline-block; font-size:9px; font-weight:800; letter-spacing:.5px;
@@ -349,29 +389,86 @@ function winPctFromSummary(summary){
   return total > 0 ? w / total : null;
 }
 function pickAbbrFromOdds(odds, away, home){
-  // odds.details often looks like "LAL -6.5". Pull the abbreviation token.
+  // odds.details often looks like "LAL -6.5". Pull the abbreviation token AND
+  // the spread number (negative = favorite). Returns { side, spread } or null.
   const det = (odds?.details || "").trim();
-  const m = det.match(/^([A-Z]{2,4})\b/);
+  const m = det.match(/^([A-Z]{2,4})\s*(-?\d+(?:\.\d+)?)/);
   if (!m) return null;
   const abbr = m[1];
+  const spread = parseFloat(m[2]);
   const homeAbbr = home?.team?.abbreviation;
   const awayAbbr = away?.team?.abbreviation;
-  if (abbr === homeAbbr) return "home";
-  if (abbr === awayAbbr) return "away";
-  return null;
+  let side = null;
+  if (abbr === homeAbbr) side = "home";
+  else if (abbr === awayAbbr) side = "away";
+  if (!side) return null;
+  return { side, spread };
 }
+
+// Standard normal CDF — Abramowitz & Stegun 26.2.17 approximation.
+// Φ(z) accurate to ~1e-7. Used to convert NBA point spreads to win prob.
+function normalCdf(z){
+  const sign = z < 0 ? -1 : 1;
+  const x = Math.abs(z) / Math.SQRT2;
+  // erf approximation
+  const t = 1 / (1 + 0.3275911 * x);
+  const y = 1 - (((((1.061405429 * t - 1.453152027) * t) + 1.421413741) * t - 0.284496736) * t + 0.254829592) * t * Math.exp(-x * x);
+  return 0.5 * (1 + sign * y);
+}
+
+// Convert a betting spread (negative = favorite) to win probability.
+// NBA score margins have σ ≈ 12 points around the spread. So a -3.5 favorite
+// has P(win) = Φ(3.5 / 12) ≈ 61.5%; a -10 favorite ≈ 79.7%.
+function spreadToWinPct(spread){
+  if (!Number.isFinite(spread)) return null;
+  const SIGMA = 12;
+  return normalCdf(-spread / SIGMA);
+}
+
 function makeInternalPick(away, home, odds){
-  // 1) If odds give us a favorite, defer to the market.
-  const favSide = pickAbbrFromOdds(odds, away, home);
-  if (favSide) return { side: favSide, reason: "favorite" };
-  // 2) Otherwise compare records, with a small home-court bump.
+  // 1) Odds path — convert the spread directly into a probability.
+  const fav = pickAbbrFromOdds(odds, away, home);
+  if (fav){
+    const favWinPct = spreadToWinPct(fav.spread);
+    if (favWinPct != null){
+      const favSidePct = fav.side === "home" ? favWinPct : favWinPct;
+      const homePct = fav.side === "home" ? favWinPct : (1 - favWinPct);
+      return {
+        side: fav.side,
+        homePct,
+        awayPct: 1 - homePct,
+        pct: favSidePct,
+        reason: `market spread ${fav.spread > 0 ? "+" : ""}${fav.spread}`,
+        source: "odds",
+      };
+    }
+    // Spread parsed but somehow not finite — fall through to record-based.
+  }
+
+  // 2) Records path — blend each side's season win % with a home-court bump.
   const aPct = winPctFromSummary(away?.records?.[0]?.summary);
   const hPct = winPctFromSummary(home?.records?.[0]?.summary);
   if (aPct == null && hPct == null) return null;
-  const aScore = (aPct ?? 0.5);
-  const hScore = (hPct ?? 0.5) + 0.03;  // ~3% home-court edge
-  if (Math.abs(aScore - hScore) < 0.005) return { side: "home", reason: "even, home" };
-  return { side: hScore >= aScore ? "home" : "away", reason: "record" };
+
+  // Treat each side's win% as Bayesian prior; convert to log-odds, add 3pt
+  // home-court edge (~0.18 logits), back to probability.
+  const HOME_EDGE_LOGITS = 0.18;
+  const safeA = Math.min(0.95, Math.max(0.05, aPct ?? 0.5));
+  const safeH = Math.min(0.95, Math.max(0.05, hPct ?? 0.5));
+  const logitA = Math.log(safeA / (1 - safeA));
+  const logitH = Math.log(safeH / (1 - safeH)) + HOME_EDGE_LOGITS;
+  // P(home wins) ≈ logistic(logitH - logitA) / 2 + 0.5  → standard log5 method.
+  const diff = logitH - logitA;
+  const homePct = 1 / (1 + Math.exp(-diff));
+  const side = homePct >= 0.5 ? "home" : "away";
+  return {
+    side,
+    homePct,
+    awayPct: 1 - homePct,
+    pct: side === "home" ? homePct : (1 - homePct),
+    reason: "season records",
+    source: "record",
+  };
 }
 function espnGameUrl(ev){
   const fromLinks = (ev.links||[]).find(l => /game/i.test((l.rel||[]).join(",")) && l.href);
@@ -463,18 +560,39 @@ function renderGames(events){
       }
     }
 
-    let predPill = "";
+    let pickBar = "";
     if (!isFinal){
       const pick = makeInternalPick(away, home, odds);
-      if (pick){
-        const t = (pick.side === "home" ? home : away).team || {};
-        const tag = t.abbreviation || t.shortDisplayName || "";
-        if (tag) predPill = `<span class="pill pred" title="Our pick (${pick.reason})">Pick: <strong>${escAttr(tag)}</strong></span>`;
+      if (pick && Number.isFinite(pick.homePct)){
+        const homeAbbr = home.team?.abbreviation || "HOME";
+        const awayAbbr = away.team?.abbreviation || "AWAY";
+        const homePct  = Math.round(pick.homePct * 100);
+        const awayPct  = 100 - homePct;
+        const homePicked = pick.side === "home";
+        const awayPicked = !homePicked;
+        const tip = `Win probability — based on ${pick.reason}. Pick: ${homePicked ? homeAbbr : awayAbbr}.`;
+        pickBar = `
+          <div class="pick-bar" title="${escAttr(tip)}">
+            <div class="pick-bar-track">
+              <div class="pick-bar-away${awayPicked ? " picked" : ""}" style="flex:${(awayPct/100).toFixed(3)} 0 0"></div>
+              <div class="pick-bar-home${homePicked ? " picked" : ""}" style="flex:${(homePct/100).toFixed(3)} 0 0"></div>
+            </div>
+            <div class="pick-bar-labels">
+              <span class="pick-bar-label${awayPicked ? " picked" : ""}">
+                ${awayPicked ? `<span class="pick-mark">PICK</span>` : ""}
+                <strong>${escAttr(awayAbbr)}</strong> ${awayPct}%
+              </span>
+              <span class="pick-bar-label right${homePicked ? " picked" : ""}">
+                <strong>${escAttr(homeAbbr)}</strong> ${homePct}%
+                ${homePicked ? `<span class="pick-mark">PICK</span>` : ""}
+              </span>
+            </div>
+          </div>`;
       }
     }
 
     // Always emit .game-extras so async enrichment (live odds, injuries) has a target.
-    const extras = `<div class="game-extras">${seriesPill}${oddsPill}${predPill}<span data-injury-slot></span></div>`;
+    const extras = `<div class="game-extras">${seriesPill}${oddsPill}${pickBar}<span data-injury-slot></span></div>`;
 
     const liveBadge = isLive ? `<span class="live-dot"></span>` : "";
     const href = espnGameUrl(ev);
