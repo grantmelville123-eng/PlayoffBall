@@ -249,7 +249,13 @@ const AUTO_REFRESH_MS      = 5 * 60 * 1000;    // every 5 minutes
 const USER_IDLE_MS         = 10 * 60 * 1000;   // stop refreshing after 10 min of no activity
 const LEADERS_CACHE_TTL_MS = 60 * 60 * 1000;   // re-use leaders for 60 min (persisted to localStorage)
 const NAMES_CACHE_TTL_MS   = 7  * 24 * 60 * 60 * 1000; // athlete names: 7 days (persisted)
-const DEBUG_LEADERS        = false;            // set to true to enable console diagnostics
+// Debug logging is off by default. Append `?debug=1` to the URL to turn it on
+// for the current page load — useful for diagnosing leader/injury fetches in
+// the browser console without a redeploy.
+const DEBUG_LEADERS        = (() => {
+  try { return /[?&]debug=1\b/.test(location.search); }
+  catch (_) { return false; }
+})();
 
 /* ===== State ===== */
 let selectedDate   = new Date();
