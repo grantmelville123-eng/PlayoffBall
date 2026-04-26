@@ -1,0 +1,786 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Playoff Ball — Bracket</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Anton&family=Oswald:wght@500;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0b0f17;
+    --panel: #131a26;
+    --panel-2: #1a2230;
+    --border: #24304a;
+    --text: #e8ecf3;
+    --muted: #95a0b5;
+    --accent: #ff6a3d;
+    --accent-2: #4d8bff;
+    --win: #3ddc97;
+    --east: #4d8bff;
+    --west: #ff6a3d;
+    --finals: #ffc857;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.4;
+  }
+
+  .topnav {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 14px 24px;
+    border-bottom: 1px solid var(--border);
+    background: linear-gradient(180deg, #161f30 0%, var(--panel) 100%);
+    flex-wrap: wrap;
+  }
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    text-decoration: none;
+    color: var(--text);
+  }
+  .brand .logo { width: 44px; height: 54px; flex-shrink: 0; }
+  .brand .brand-text {
+    font-family: 'Anton', Impact, sans-serif;
+    font-size: 30px;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    line-height: 1;
+  }
+  .brand .brand-text .accent-char { color: var(--accent); }
+  .brand .brand-sub {
+    font-family: 'Oswald', sans-serif;
+    font-size: 10px;
+    letter-spacing: 3px;
+    color: var(--muted);
+    text-transform: uppercase;
+    display: block;
+    margin-top: 3px;
+  }
+  .nav-links { display: flex; gap: 4px; }
+  .nav-links a {
+    color: var(--muted);
+    text-decoration: none;
+    padding: 8px 14px;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 600;
+    font-family: 'Oswald', sans-serif;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+  }
+  .nav-links a.active { background: var(--panel-2); color: var(--text); }
+  .nav-links a:hover { color: var(--text); }
+
+  header {
+    padding: 18px 24px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+  header h1 {
+    margin: 0;
+    font-family: 'Oswald', sans-serif;
+    font-size: 20px;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+  }
+  header .sub { color: var(--muted); font-size: 13px; margin-top: 3px; }
+  .season-select {
+    background: var(--panel-2);
+    color: var(--text);
+    border: 1px solid var(--border);
+    padding: 6px 10px;
+    border-radius: 6px;
+    font-size: 13px;
+  }
+
+  main {
+    max-width: 1600px;
+    margin: 0 auto;
+    padding: 20px;
+  }
+  .loading {
+    color: var(--muted);
+    text-align: center;
+    padding: 60px 20px;
+    font-style: italic;
+  }
+
+  /* ---------- Bracket tree (slot-based alignment) ---------- */
+  .bracket-tree {
+    display: grid;
+    grid-template-columns: 1.05fr 1.05fr 1.05fr 1.2fr 1.05fr 1.05fr 1.05fr;
+    gap: 10px;
+    align-items: stretch;
+  }
+  .bracket-col {
+    display: flex;
+    flex-direction: column;
+    min-height: 720px;
+  }
+  .col-header {
+    flex: 0 0 auto;
+    font-family: 'Oswald', sans-serif;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    color: var(--muted);
+    text-align: center;
+    padding: 6px 4px 10px;
+    font-weight: 700;
+  }
+  .col-body {
+    flex: 1 1 auto;
+    display: flex;
+    flex-direction: column;
+  }
+  /* Each slot takes equal share of column height; series centers vertically inside.
+     With slots of equal height, the midpoint of two adjacent slots in Rn+1
+     aligns exactly with the center of their corresponding slot in Rn.         */
+  .slot {
+    flex: 1 1 0;
+    min-height: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 4px 0;
+  }
+  .slot > .series { width: 100%; }
+
+  .conf-row {
+    display: grid;
+    grid-template-columns: 3.15fr 1.2fr 3.15fr;
+    gap: 10px;
+    margin-bottom: 6px;
+  }
+  .conf-label {
+    font-family: 'Oswald', sans-serif;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    padding: 6px 12px;
+    border-radius: 6px;
+    text-align: center;
+  }
+  .conf-label.west { background: rgba(255,106,61,0.12); color: var(--west); border: 1px solid rgba(255,106,61,0.35); }
+  .conf-label.east { background: rgba(77,139,255,0.12); color: var(--east); border: 1px solid rgba(77,139,255,0.35); }
+  .conf-label.finals { background: rgba(255,200,87,0.12); color: var(--finals); border: 1px solid rgba(255,200,87,0.35); }
+
+  .series {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 10px 12px;
+    position: relative;
+  }
+  .series.west { border-left: 3px solid var(--west); }
+  .series.east { border-right: 3px solid var(--east); }
+  .series.finals {
+    border-top: 3px solid var(--finals);
+    border-bottom: 3px solid var(--finals);
+    background: linear-gradient(180deg, rgba(255,200,87,0.06), transparent 60%);
+  }
+  .series .s-team {
+    display: grid;
+    grid-template-columns: 22px 1fr 24px;
+    align-items: center;
+    gap: 8px;
+    padding: 3px 0;
+    font-size: 13px;
+  }
+  .series.east .s-team { grid-template-columns: 24px 1fr 22px; direction: rtl; }
+  .series.east .s-team > * { direction: ltr; }
+  .series .s-team img { width: 22px; height: 22px; object-fit: contain; }
+  .series .s-team .s-name {
+    font-weight: 500;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .series .s-team .s-seed {
+    color: var(--muted);
+    font-size: 10px;
+    font-weight: 700;
+    background: var(--panel-2);
+    padding: 1px 5px;
+    border-radius: 3px;
+  }
+  .series .s-team .s-wins {
+    font-weight: 700;
+    font-size: 15px;
+    text-align: right;
+    min-width: 20px;
+  }
+  .series .s-team.won { color: var(--win); }
+  .series .s-team.eliminated .s-name {
+    color: var(--muted);
+    text-decoration: line-through;
+    text-decoration-color: rgba(255,94,94,0.4);
+  }
+  .series .s-summary {
+    color: var(--muted);
+    font-size: 11px;
+    margin-top: 6px;
+    padding-top: 6px;
+    border-top: 1px dashed var(--border);
+    text-align: center;
+  }
+  .series .s-next {
+    color: var(--accent);
+    font-size: 11px;
+    margin-top: 4px;
+    font-weight: 500;
+    text-align: center;
+  }
+  .series.tbd { opacity: 0.45; font-style: italic; }
+
+  /* ---------- Mobile bracket carousel (hidden on desktop) ---------- */
+  .bracket-mobile     { display: none; }
+  .bracket-mobile-nav { display: none; }
+
+  @media (max-width: 1000px) {
+    .bracket-tree { display: none; }
+    .conf-row     { display: none; }
+    .bracket-mobile     { display: block; }
+    .bracket-mobile-nav { display: flex; }
+    /* East team rows read left-to-right when stacked vertically on mobile */
+    .series.east .s-team { grid-template-columns: 22px 1fr 24px; direction: ltr; }
+    .series.east { border-right: 1px solid var(--border); border-left: 3px solid var(--east); }
+  }
+
+  .bracket-mobile-nav {
+    gap: 4px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 4px;
+    margin-bottom: 12px;
+    position: sticky;
+    top: 8px;
+    z-index: 5;
+  }
+  .mb-round-btn {
+    flex: 1;
+    background: transparent;
+    border: 0;
+    color: var(--muted);
+    padding: 10px 4px;
+    font-family: 'Oswald', sans-serif;
+    font-weight: 700;
+    letter-spacing: 1px;
+    font-size: 11px;
+    text-transform: uppercase;
+    cursor: pointer;
+    border-radius: 7px;
+    white-space: nowrap;
+  }
+  .mb-round-btn.active { background: var(--panel-2); color: var(--text); }
+
+  .mb-rounds-track {
+    display: grid;
+    grid-auto-flow: column;
+    grid-auto-columns: 100%;
+    overflow-x: auto;
+    overflow-y: visible;
+    scroll-snap-type: x mandatory;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+  .mb-rounds-track::-webkit-scrollbar { display: none; }
+  .mb-round-page {
+    scroll-snap-align: start;
+    padding: 0 2px;
+    min-width: 0;
+  }
+  .mb-conf-label {
+    font-family: 'Oswald', sans-serif;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    padding: 6px 12px;
+    border-radius: 6px;
+    text-align: center;
+    margin: 14px 0 8px;
+  }
+  .mb-conf-label.east   { background: rgba(77,139,255,0.12); color: var(--east);   border: 1px solid rgba(77,139,255,0.35); }
+  .mb-conf-label.west   { background: rgba(255,106,61,0.12); color: var(--west);   border: 1px solid rgba(255,106,61,0.35); }
+  .mb-conf-label.finals { background: rgba(255,200,87,0.12); color: var(--finals); border: 1px solid rgba(255,200,87,0.35); }
+  .mb-series-list { display: flex; flex-direction: column; gap: 8px; }
+  .mb-empty { color: var(--muted); font-style: italic; padding: 12px; text-align: center; font-size: 13px; }
+  .mb-hint { color: var(--muted); font-size: 11px; text-align: center; padding: 10px 0 4px; letter-spacing: 1px; text-transform: uppercase; }
+
+  footer {
+    text-align: center;
+    color: var(--muted);
+    font-size: 12px;
+    padding: 16px;
+  }
+</style>
+</head>
+<body>
+<nav class="topnav">
+  <a href="index.html" class="brand" aria-label="Playoff Ball home">
+    <svg class="logo" viewBox="0 0 48 60" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+      <defs>
+        <linearGradient id="gold-g" x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" stop-color="#ffe27a"/>
+          <stop offset="50%" stop-color="#d4af37"/>
+          <stop offset="100%" stop-color="#9c7f24"/>
+        </linearGradient>
+        <radialGradient id="ball-g" cx="35%" cy="35%" r="75%">
+          <stop offset="0%" stop-color="#ff9068"/>
+          <stop offset="60%" stop-color="#ff6a3d"/>
+          <stop offset="100%" stop-color="#c14a22"/>
+        </radialGradient>
+      </defs>
+      <rect x="8" y="52" width="32" height="6" rx="1.5" fill="url(#gold-g)" stroke="#5e4a0e" stroke-width="0.8"/>
+      <rect x="12" y="48" width="24" height="4" fill="url(#gold-g)" stroke="#5e4a0e" stroke-width="0.6"/>
+      <path d="M18 38 L16 48 L32 48 L30 38 Z" fill="url(#gold-g)" stroke="#5e4a0e" stroke-width="0.8"/>
+      <path d="M6 26 L18 38 L30 38 L42 26 Z" fill="url(#gold-g)" stroke="#5e4a0e" stroke-width="0.8"/>
+      <ellipse cx="24" cy="26" rx="17" ry="3.5" fill="url(#gold-g)" stroke="#5e4a0e" stroke-width="0.8"/>
+      <circle cx="24" cy="15" r="11" fill="url(#ball-g)" stroke="#1a1a1a" stroke-width="1.2"/>
+      <path d="M13 15 H 35" stroke="#1a1a1a" stroke-width="1.2" fill="none" stroke-linecap="round"/>
+      <path d="M24 4 V 26" stroke="#1a1a1a" stroke-width="1.2" fill="none" stroke-linecap="round"/>
+      <path d="M16 7 Q 24 15 16 23" stroke="#1a1a1a" stroke-width="1.2" fill="none" stroke-linecap="round"/>
+      <path d="M32 7 Q 24 15 32 23" stroke="#1a1a1a" stroke-width="1.2" fill="none" stroke-linecap="round"/>
+    </svg>
+    <div>
+      <span class="brand-text">Play<span class="accent-char">off</span> Ball</span>
+      <span class="brand-sub">NBA Postseason</span>
+    </div>
+  </a>
+  <div class="nav-links">
+    <a href="index.html">Scoreboard</a>
+    <a href="bracket.html" class="active">Bracket</a>
+  </div>
+</nav>
+
+<header>
+  <div>
+    <h1>Playoff Bracket</h1>
+    <div class="sub" id="subLabel">Loading…</div>
+  </div>
+  <div>
+    <label for="seasonSelect" style="font-size:13px;color:var(--muted);margin-right:6px;">Season</label>
+    <select id="seasonSelect" class="season-select"></select>
+  </div>
+</header>
+
+<main>
+  <div id="bracketRoot" class="loading">Loading bracket…</div>
+</main>
+
+<footer>
+  Data via ESPN public scoreboard. Teams are mapped to conferences manually. Rounds default to First Round when ESPN hasn't tagged a game yet.
+</footer>
+
+<script>
+const ESPN_SCOREBOARD = "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard";
+
+const PLAYOFF_START = { m: 4, d: 12 };
+const PLAYOFF_END   = { m: 6, d: 28 };
+
+const ROUND_NAMES = {
+  1: "First Round",
+  2: "Conf Semifinals",
+  3: "Conf Finals",
+  4: "NBA Finals",
+};
+
+const ROUND_MATCHERS = [
+  { re: /first\s*round|1st\s*round/i,    round: 1 },
+  { re: /conference\s*semi|semifinals?/i, round: 2 },
+  { re: /conference\s*finals?/i,          round: 3 },
+  { re: /nba\s*finals?|championship/i,    round: 4 },
+];
+
+// Hardcoded NBA team → conference map (lowercase substrings of team displayName / name / abbreviation)
+const EAST_KEYS = [
+  "hawks","celtics","nets","hornets","bulls","cavaliers","pistons","pacers","heat","bucks","knicks","magic","76ers","sixers","raptors","wizards",
+  "atl","bos","bkn","brk","cha","cho","chi","cle","det","ind","mia","mil","ny","nyk","orl","phi","tor","was","wsh"
+];
+const WEST_KEYS = [
+  "mavericks","nuggets","warriors","rockets","clippers","lakers","grizzlies","timberwolves","wolves","pelicans","thunder","suns","trail blazers","blazers","kings","spurs","jazz",
+  "dal","den","gs","gsw","hou","lac","lal","mem","min","no","nop","okc","phx","phoe","por","sac","sa","sas","uta","utah"
+];
+
+function matchConferenceByTeam(team) {
+  const hay = `${team?.displayName || ""} ${team?.name || ""} ${team?.location || ""} ${team?.abbreviation || ""}`.toLowerCase();
+  if (WEST_KEYS.some(k => hay.includes(k))) return "west";
+  if (EAST_KEYS.some(k => hay.includes(k))) return "east";
+  return null;
+}
+
+function getSelectedSeason() {
+  return Number(document.getElementById("seasonSelect").value);
+}
+
+function populateSeasonSelect() {
+  const sel = document.getElementById("seasonSelect");
+  const now = new Date();
+  const currentPlayoffYear = now.getMonth() >= 6 ? now.getFullYear() + 1 : now.getFullYear();
+  for (let y = currentPlayoffYear; y >= currentPlayoffYear - 3; y--) {
+    const opt = document.createElement("option");
+    opt.value = String(y);
+    opt.textContent = `${y - 1}-${String(y).slice(-2)}`;
+    sel.appendChild(opt);
+  }
+  sel.value = String(currentPlayoffYear);
+}
+
+function toYmd(d) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}${m}${day}`;
+}
+
+async function jsonFetch(url) {
+  const res = await fetch(url, { cache: "no-store" });
+  if (!res.ok) throw new Error("HTTP " + res.status);
+  return res.json();
+}
+
+async function fetchPlayoffGames(seasonYear) {
+  const start = new Date(seasonYear, PLAYOFF_START.m - 1, PLAYOFF_START.d);
+  const end   = new Date(seasonYear, PLAYOFF_END.m - 1,   PLAYOFF_END.d);
+
+  try {
+    const url = `${ESPN_SCOREBOARD}?dates=${toYmd(start)}-${toYmd(end)}&limit=300`;
+    const data = await jsonFetch(url);
+    const events = (data.events || []).filter(isPostseasonOrPlayoffWindow);
+    if (events.length) return events;
+  } catch (_) {}
+
+  // Fallback: fetch every day in parallel batches
+  const days = [];
+  for (let d = new Date(start); d <= end; d = new Date(d.getTime() + 86400000)) days.push(new Date(d));
+  const batchSize = 8;
+  const out = [];
+  for (let i = 0; i < days.length; i += batchSize) {
+    const batch = days.slice(i, i + batchSize);
+    const results = await Promise.allSettled(batch.map(d =>
+      jsonFetch(`${ESPN_SCOREBOARD}?dates=${toYmd(d)}`)
+    ));
+    for (const r of results) {
+      if (r.status === "fulfilled") {
+        for (const ev of (r.value.events || [])) if (isPostseasonOrPlayoffWindow(ev)) out.push(ev);
+      }
+    }
+  }
+  return out;
+}
+
+function isPostseasonOrPlayoffWindow(ev) {
+  if (ev?.season?.type === 3) return true;
+  if ((ev?.season?.slug || "").includes("post")) return true;
+  const comp = ev?.competitions?.[0];
+  const note = comp?.notes?.[0]?.headline || "";
+  if (/playoff|round|conference|finals/i.test(note)) return true;
+  if (comp?.series?.summary) return true;
+  return false;
+}
+
+function detectRound(ev) {
+  const comp = ev.competitions?.[0];
+  const haystack = [
+    comp?.notes?.[0]?.headline,
+    comp?.notes?.[0]?.type,
+    ev?.season?.slug,
+    ev?.name,
+    ev?.shortName,
+  ].filter(Boolean).join(" | ");
+  for (const m of ROUND_MATCHERS) if (m.re.test(haystack)) return m.round;
+  return null;
+}
+
+function groupSeries(events) {
+  const map = new Map();
+  for (const ev of events) {
+    const comp = ev.competitions?.[0];
+    if (!comp) continue;
+    const competitors = comp.competitors || [];
+    if (competitors.length !== 2) continue;
+    const ids = competitors.map(c => c.team?.id).sort();
+    const key = ids.join("-");
+
+    if (!map.has(key)) {
+      const teamObjs = competitors.map(c => ({
+        id: c.team?.id,
+        name: c.team?.displayName || c.team?.name,
+        abbr: c.team?.abbreviation,
+        logo: c.team?.logo,
+        seed: null,
+        wins: 0,
+        _raw: c.team,
+      }));
+      const conf = matchConferenceByTeam(teamObjs[0]._raw) || matchConferenceByTeam(teamObjs[1]._raw);
+      map.set(key, {
+        key,
+        teams: teamObjs,
+        games: [],
+        round: null,
+        conference: conf,
+        summary: "",
+        nextGame: null,
+      });
+    }
+
+    const series = map.get(key);
+    series.games.push(ev);
+
+    for (const c of competitors) {
+      const target = series.teams.find(t => t.id === c.team?.id);
+      if (target && c.winner === true) target.wins += 1;
+      if (target && c.curatedRank?.current != null && !target.seed) target.seed = c.curatedRank.current;
+    }
+    if (series.round == null) series.round = detectRound(ev) || series.round;
+    if (comp.series?.summary) series.summary = comp.series.summary;
+    const state = comp.status?.type?.state;
+    if (state === "pre") {
+      if (!series.nextGame || new Date(ev.date) < new Date(series.nextGame.date)) series.nextGame = ev;
+    }
+  }
+
+  for (const s of map.values()) if (s.round == null) s.round = 1;
+  return [...map.values()];
+}
+
+function sortSeries(a, b) {
+  const aw = a.teams[0].wins + a.teams[1].wins;
+  const bw = b.teams[0].wins + b.teams[1].wins;
+  return bw - aw || a.teams[0].name.localeCompare(b.teams[0].name);
+}
+
+function renderBracket(seriesList, seasonYear) {
+  const root = document.getElementById("bracketRoot");
+  if (!seriesList.length) {
+    root.className = "loading";
+    root.innerHTML = `No playoff series found for the ${seasonYear - 1}-${String(seasonYear).slice(-2)} season yet.<br><small>If the playoffs haven't started, check back once they do.</small>`;
+    return;
+  }
+  root.className = "";
+
+  const buckets = {
+    west: { 1: [], 2: [], 3: [] },
+    east: { 1: [], 2: [], 3: [] },
+    finals: []
+  };
+  for (const s of seriesList) {
+    const r = s.round || 1;
+    if (r === 4) { buckets.finals.push(s); continue; }
+    const conf = s.conference || assignConferenceFallback(buckets, r);
+    buckets[conf][r].push(s);
+  }
+  for (const conf of ["west", "east"]) {
+    for (const r of [1, 2, 3]) buckets[conf][r].sort(sortSeries);
+  }
+
+  // Equal-slot column builder: guarantees slot centers align across rounds
+  const col = (items, expected, round, side) => {
+    let slots = "";
+    for (const s of items) slots += `<div class="slot">${renderSeries(s, side)}</div>`;
+    for (let i = 0; i < Math.max(0, expected - items.length); i++) {
+      slots += `<div class="slot">${renderPlaceholder(side)}</div>`;
+    }
+    return `
+      <div class="bracket-col">
+        <div class="col-header">${ROUND_NAMES[round]}</div>
+        <div class="col-body">${slots}</div>
+      </div>`;
+  };
+  const finalsCol = () => {
+    const fs = buckets.finals[0];
+    const content = fs ? renderSeries(fs, "finals") : renderPlaceholder("finals");
+    return `
+      <div class="bracket-col">
+        <div class="col-header" style="color:var(--finals)">NBA Finals</div>
+        <div class="col-body"><div class="slot">${content}</div></div>
+      </div>`;
+  };
+
+  root.innerHTML = `
+    <div class="conf-row">
+      <div class="conf-label west">Western Conference</div>
+      <div class="conf-label finals">Finals</div>
+      <div class="conf-label east">Eastern Conference</div>
+    </div>
+    <div class="bracket-tree">
+      ${col(buckets.west[1], 4, 1, "west")}
+      ${col(buckets.west[2], 2, 2, "west")}
+      ${col(buckets.west[3], 1, 3, "west")}
+      ${finalsCol()}
+      ${col(buckets.east[3], 1, 3, "east")}
+      ${col(buckets.east[2], 2, 2, "east")}
+      ${col(buckets.east[1], 4, 1, "east")}
+    </div>
+    ${renderMobileBracket(buckets)}
+  `;
+
+  wireMobileRoundNav();
+}
+
+function renderMobileBracket(buckets) {
+  const renderRoundPage = (round) => {
+    if (round === 4) {
+      const fs = buckets.finals[0];
+      const content = fs ? renderSeries(fs, "finals") : `<div class="mb-empty">Finals not set yet</div>`;
+      return `
+        <section class="mb-round-page" data-round="4">
+          <div class="mb-conf-label finals">NBA Finals</div>
+          <div class="mb-series-list">${content}</div>
+        </section>`;
+    }
+    const eastList = buckets.east[round].length
+      ? buckets.east[round].map(s => renderSeries(s, "east")).join("")
+      : `<div class="mb-empty">No East series yet</div>`;
+    const westList = buckets.west[round].length
+      ? buckets.west[round].map(s => renderSeries(s, "west")).join("")
+      : `<div class="mb-empty">No West series yet</div>`;
+    return `
+      <section class="mb-round-page" data-round="${round}">
+        <div class="mb-conf-label east">Eastern Conference</div>
+        <div class="mb-series-list">${eastList}</div>
+        <div class="mb-conf-label west">Western Conference</div>
+        <div class="mb-series-list">${westList}</div>
+      </section>`;
+  };
+
+  return `
+    <div class="bracket-mobile-nav">
+      <button class="mb-round-btn active" data-round="1">First Round</button>
+      <button class="mb-round-btn" data-round="2">Semis</button>
+      <button class="mb-round-btn" data-round="3">Conf Finals</button>
+      <button class="mb-round-btn" data-round="4">Finals</button>
+    </div>
+    <div class="bracket-mobile">
+      <div class="mb-rounds-track">
+        ${renderRoundPage(1)}
+        ${renderRoundPage(2)}
+        ${renderRoundPage(3)}
+        ${renderRoundPage(4)}
+      </div>
+      <div class="mb-hint">Swipe ◀ ▶ to change round</div>
+    </div>
+  `;
+}
+
+function wireMobileRoundNav() {
+  const track = document.querySelector(".mb-rounds-track");
+  const buttons = document.querySelectorAll(".mb-round-btn");
+  if (!track || !buttons.length) return;
+
+  buttons.forEach(btn => {
+    btn.addEventListener("click", () => {
+      const round = parseInt(btn.dataset.round, 10);
+      const page = track.querySelector(`.mb-round-page[data-round="${round}"]`);
+      if (page) page.scrollIntoView({ behavior: "smooth", inline: "start", block: "nearest" });
+    });
+  });
+
+  // Sync the active button as the user swipes between rounds.
+  let scrollTimer;
+  track.addEventListener("scroll", () => {
+    clearTimeout(scrollTimer);
+    scrollTimer = setTimeout(() => {
+      const rect = track.getBoundingClientRect();
+      const mid  = rect.left + rect.width / 2;
+      let activeRound = 1;
+      track.querySelectorAll(".mb-round-page").forEach(page => {
+        const r = page.getBoundingClientRect();
+        if (r.left <= mid && r.right > mid) activeRound = parseInt(page.dataset.round, 10);
+      });
+      buttons.forEach(b => b.classList.toggle("active", parseInt(b.dataset.round, 10) === activeRound));
+    }, 80);
+  });
+}
+
+function assignConferenceFallback(buckets, round) {
+  return buckets.west[round].length <= buckets.east[round].length ? "west" : "east";
+}
+
+function renderSeries(s, side) {
+  const [a, b] = s.teams;
+  const clinched = a.wins >= 4 || b.wins >= 4;
+  const nextGameText = s.nextGame
+    ? `Next: ${new Date(s.nextGame.date).toLocaleString(undefined, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}`
+    : "";
+  return `
+    <div class="series ${side}">
+      ${teamLine(a, b, clinched)}
+      ${teamLine(b, a, clinched)}
+      ${s.summary ? `<div class="s-summary">${escapeHtml(s.summary)}</div>` : ""}
+      ${!clinched && nextGameText ? `<div class="s-next">${escapeHtml(nextGameText)}</div>` : ""}
+    </div>`;
+}
+
+function teamLine(team, other, clinched) {
+  const won = clinched && team.wins > other.wins;
+  const eliminated = clinched && team.wins < other.wins;
+  const cls = won ? "won" : (eliminated ? "eliminated" : "");
+  const logo = team.logo ? `<img src="${team.logo}" alt="">` : `<div></div>`;
+  const seed = team.seed ? `<span class="s-seed">${team.seed}</span>` : "";
+  return `
+    <div class="s-team ${cls}">
+      ${logo}
+      <div class="s-name">${seed}<span>${escapeHtml(team.name || "")}</span></div>
+      <div class="s-wins">${team.wins}</div>
+    </div>`;
+}
+
+function renderPlaceholder(side) {
+  return `
+    <div class="series tbd ${side}">
+      <div class="s-team"><div></div><div class="s-name">TBD</div><div class="s-wins">–</div></div>
+      <div class="s-team"><div></div><div class="s-name">TBD</div><div class="s-wins">–</div></div>
+    </div>`;
+}
+
+function escapeHtml(str) {
+  return String(str ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+async function loadBracket() {
+  const root = document.getElementById("bracketRoot");
+  const year = getSelectedSeason();
+  root.className = "loading";
+  root.innerHTML = "Loading bracket…";
+  document.getElementById("subLabel").textContent = `${year - 1}-${String(year).slice(-2)} season`;
+  try {
+    const events = await fetchPlayoffGames(year);
+    const series = groupSeries(events);
+    renderBracket(series, year);
+  } catch (err) {
+    root.className = "loading";
+    root.innerHTML = `Couldn't load bracket: ${escapeHtml(err.message)}`;
+  }
+}
+
+populateSeasonSelect();
+document.getElementById("seasonSelect").addEventListener("change", loadBracket);
+loadBracket();
+</script>
+</body>
+</html>
