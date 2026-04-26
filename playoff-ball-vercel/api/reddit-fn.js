@@ -1,71 +1,52 @@
-// Vercel Edge Function: server-side Reddit fetch with a proper User-Agent.
+// Vercel Edge Function: server-side Reddit fetch via OAuth.
 //
 // File path determines URL: this file → /api/reddit-fn
 //
-// Why this exists: Reddit aggressively blocks/rate-limits requests whose
-// User-Agent looks like a default browser or library UA, especially from
-// mobile Safari. This Function lets us *set* the UA to a unique string
-// Reddit accepts.
+// Why OAuth: Reddit blocks unauthenticated JSON API calls from shared cloud
+// IP ranges (Vercel edge nodes). OAuth traffic goes through a separate
+// endpoint (oauth.reddit.com) that Reddit doesn't rate-limit the same way.
 //
-// Caching: 5-min Cache-Control so Vercel's edge caches the JSON. Hundreds
-// of visitors all share the same cached response, and we only hit Reddit
-// once per 5 min — keeping us well under any per-IP rate limit.
+// Required Vercel env vars (set in project Settings → Environment Variables):
+//   REDDIT_CLIENT_ID     — "personal use script" client ID from reddit.com/prefs/apps
+//   REDDIT_CLIENT_SECRET — secret from the same app
 //
-// Strategy:
-//   1. Try old.reddit.com JSON (tends to be more permissive than www).
-//   2. Try www.reddit.com JSON.
-//   3. Fall back to the Atom RSS feed — a different endpoint that sometimes
-//      survives IP-level blocks that the JSON API doesn't. Posts arrive
-//      without upvote/comment counts (RSS doesn't carry those), so we
-//      return nulls and let the frontend render just the title + link.
+// Flow (client_credentials grant — no user login needed):
+//   1. POST /api/v1/access_token with Basic auth → get a bearer token.
+//   2. GET oauth.reddit.com/r/{sub}/hot with that token → get posts.
+//
+// Caching: 5-min Cache-Control so Vercel's edge caches the response.
+// Hundreds of visitors share one cached response; Reddit only sees one
+// token request + one posts request per 5-minute window per edge region.
+//
+// Fallback: if OAuth env vars are missing or the OAuth call fails, we
+// still try the unauthenticated JSON endpoints as a last resort so the
+// function degrades gracefully during setup.
 
 export const config = { runtime: 'edge' };
 
-// Decode the handful of HTML entities Reddit uses in RSS titles.
-function decodeEntities(str) {
-  return str
-    .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&#x27;/g, "'");
-}
+const UA = "PlayoffBall/1.0 (+https://playoff-ball.vercel.app) by anonymous";
 
-// Parse an Atom/RSS feed from Reddit into the same children-array shape
-// the frontend already knows how to render. ups/num_comments are null
-// because the RSS feed doesn't expose them.
-function parseRss(xml) {
-  const children = [];
-  const entryRx = /<entry>([\s\S]*?)<\/entry>/g;
-  let m;
-  while ((m = entryRx.exec(xml)) !== null) {
-    const block = m[1];
+const OK_HEADERS = {
+  "Content-Type": "application/json; charset=utf-8",
+  "Cache-Control": "public, max-age=300, s-maxage=300, stale-while-revalidate=600",
+};
 
-    // Title may be plain text or wrapped in CDATA.
-    const titleM = /<title[^>]*>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/title>/.exec(block);
-    const title = titleM ? decodeEntities(titleM[1].trim()) : "";
-
-    // Atom link: <link rel="alternate" href="https://www.reddit.com/r/nba/comments/..."/>
-    const linkM = /<link[^>]+href="([^"]+)"/.exec(block);
-    const href = linkM ? linkM[1] : "";
-
-    if (!title || !href) continue;
-
-    // Normalise to a relative permalink so renderRedditItems can prepend the base URL.
-    const permalink = href.replace(/^https?:\/\/(?:www\.)?reddit\.com/, "") || href;
-
-    children.push({
-      data: {
-        title,
-        permalink,
-        ups: null,          // not in RSS
-        num_comments: null, // not in RSS
-        stickied: false,
-      }
-    });
-  }
-  return children;
+async function getOAuthToken(clientId, clientSecret) {
+  // Basic auth = base64(clientId:clientSecret). btoa() is available in Edge runtime.
+  const credentials = btoa(`${clientId}:${clientSecret}`);
+  const res = await fetch("https://www.reddit.com/api/v1/access_token", {
+    method: "POST",
+    headers: {
+      "Authorization": `Basic ${credentials}`,
+      "User-Agent": UA,
+      "Content-Type": "application/x-www-form-urlencoded",
+    },
+    body: "grant_type=client_credentials",
+  });
+  if (!res.ok) throw new Error(`Token fetch failed: ${res.status}`);
+  const data = await res.json();
+  if (!data.access_token) throw new Error("No access_token in response");
+  return data.access_token;
 }
 
 export default async function handler(request) {
@@ -73,65 +54,52 @@ export default async function handler(request) {
   const sub   = (url.searchParams.get("sub")   || "nba").replace(/[^a-zA-Z0-9_]/g, "");
   const limit = (url.searchParams.get("limit") || "15").replace(/[^0-9]/g, "") || "15";
 
-  const ua = "PlayoffBall/1.0 (+https://playoff-ball.vercel.app) by anonymous";
+  // ── Phase 1: OAuth (preferred) ───────────────────────────────────────────
+  const clientId     = (typeof REDDIT_CLIENT_ID     !== "undefined") ? REDDIT_CLIENT_ID     : null;
+  const clientSecret = (typeof REDDIT_CLIENT_SECRET !== "undefined") ? REDDIT_CLIENT_SECRET : null;
 
-  // ── Phase 1: JSON API ────────────────────────────────────────────────────
+  if (clientId && clientSecret) {
+    try {
+      const token = await getOAuthToken(clientId, clientSecret);
+      const res = await fetch(`https://oauth.reddit.com/r/${sub}/hot?limit=${limit}&raw_json=1`, {
+        headers: {
+          "Authorization": `Bearer ${token}`,
+          "User-Agent": UA,
+          "Accept": "application/json",
+        },
+      });
+      if (res.ok) {
+        const text = await res.text();
+        return new Response(text, { status: 200, headers: OK_HEADERS });
+      }
+    } catch (_) {
+      // OAuth failed — fall through to unauthenticated attempts.
+    }
+  }
+
+  // ── Phase 2: Unauthenticated JSON (fallback / pre-setup) ─────────────────
   const jsonTargets = [
     `https://old.reddit.com/r/${sub}/hot.json?limit=${limit}`,
     `https://www.reddit.com/r/${sub}/hot.json?limit=${limit}`,
   ];
-
   for (const target of jsonTargets) {
     try {
       const res = await fetch(target, {
-        headers: { "User-Agent": ua, "Accept": "application/json" },
+        headers: { "User-Agent": UA, "Accept": "application/json" },
       });
       if (res.ok) {
         const text = await res.text();
-        return new Response(text, {
-          status: 200,
-          headers: {
-            "Content-Type": "application/json; charset=utf-8",
-            "Cache-Control": "public, max-age=300, s-maxage=300, stale-while-revalidate=600",
-          },
-        });
+        return new Response(text, { status: 200, headers: OK_HEADERS });
       }
     } catch (_) { /* try next */ }
   }
 
-  // ── Phase 2: RSS/Atom feed ───────────────────────────────────────────────
-  const rssTarget = `https://www.reddit.com/r/${sub}/hot.rss?limit=${limit}`;
-  try {
-    const res = await fetch(rssTarget, {
-      headers: { "User-Agent": ua, "Accept": "application/atom+xml, application/rss+xml, text/xml" },
-    });
-    if (res.ok) {
-      const xml = await res.text();
-      const children = parseRss(xml);
-      if (children.length) {
-        return new Response(
-          JSON.stringify({ data: { children }, _source: "rss" }),
-          {
-            status: 200,
-            headers: {
-              "Content-Type": "application/json; charset=utf-8",
-              "Cache-Control": "public, max-age=300, s-maxage=300, stale-while-revalidate=600",
-            },
-          }
-        );
-      }
-    }
-  } catch (_) { /* fall through to error */ }
-
   // ── All sources failed ───────────────────────────────────────────────────
   return new Response(
-    JSON.stringify({ error: "reddit_upstream", message: "JSON and RSS endpoints both failed" }),
+    JSON.stringify({ error: "reddit_upstream", message: "OAuth and unauthenticated endpoints both failed" }),
     {
       status: 502,
-      headers: {
-        "Content-Type": "application/json",
-        "Cache-Control": "public, max-age=60",
-      },
+      headers: { "Content-Type": "application/json", "Cache-Control": "public, max-age=60" },
     }
   );
 }

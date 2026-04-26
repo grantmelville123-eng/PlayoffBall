@@ -54,6 +54,9 @@
     /* On phones the news feed is long — show Playoff Leaders first instead. */
     .right-col .leaders-card{ order: 0; }
     .right-col .feed-card   { order: 1; }
+    /* r/nba feed doesn't work on mobile (Reddit blocks server-side OAuth
+       registration is broken) — hide the tab so users only see NBA News. */
+    .leader-tab[data-feed="reddit"]{ display: none; }
   }
 
   .card{background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:14px; margin-bottom:14px}
@@ -998,14 +1001,23 @@ async function enrichGames(){
     }
   }));
 
-  // 2) Real live odds from The Odds API (DraftKings/FanDuel via our Pages
-  //    Function /api/live-odds). One fetch covers every NBA game on the slate;
-  //    map is keyed by an order-independent mascot pair.
+  // 2) Real live odds from The Odds API (DraftKings/FanDuel via /api/live-odds).
+  //    One fetch covers every NBA game on the slate; map is keyed by an
+  //    order-independent mascot pair.
   //
   //    This SUPERSEDES the OPEN/PRE/CLOSE label whenever we find a match —
   //    The Odds API gives us actual current betting lines, including in-game
   //    moves. If the API is unconfigured (503) or the game isn't on their
   //    slate, the existing OPEN/PRE/CLOSE pill stays visible.
+  //
+  //    QUOTA GUARD: only called when at least one game is in progress.
+  //    Pre- and post-game cards already show ESPN's lines (rendered above),
+  //    so there's nothing to be gained on non-live slates and skipping saves
+  //    2 credits per page load (the cost of our 2-market request).
+  if (!liveCards.length){
+    if (DEBUG_LEADERS) console.log("[odds-api] skipped — no live games on slate");
+    return;
+  }
   try{
     const oddsByKey = await loadLiveOddsApi();
     if (oddsByKey && Object.keys(oddsByKey).length){
