@@ -657,12 +657,14 @@ function injStatusOf(inj){
 //   site v2:   { injuries: [{ athlete:{...}, status, type:{description}, ... }] }
 //              (sometimes also { team:{...}, injuries:[ { athletes:[ ... ] } ] })
 //   site web:  { items: [{ athlete:{...}, status, ... }] }   ← shape varies
-//   core v2:   { items: [{ $ref: "...athletes/123/...", status, ... }] }
+//   core v2:   { items: [{ $ref: "...athletes/123/injuries/456..." }, ... ] }
+//              ↑ items are BARE $refs to injury records — must dereference twice:
+//                once to load the injury (status, athlete:{$ref}), then again
+//                for the athlete (displayName, position).
 async function parseInjuryPayload(data){
   if (!data || typeof data !== "object") return [];
 
-  // Sometimes site v2 wraps a single-team result as { team, injuries: [{ athletes: [...] }] }
-  // (one wrapper per team that injured roster). Flatten if we see that.
+  // Normalize the various wrapper shapes into a flat `items` array.
   let items = [];
   if (Array.isArray(data.injuries)){
     for (const wrap of data.injuries){
@@ -673,17 +675,34 @@ async function parseInjuryPayload(data){
   if (!items.length && Array.isArray(data.items)) items = data.items;
   if (!items.length) return [];
 
-  // For core v2 shape, athletes are $ref'd not embedded. Resolve in parallel,
-  // re-using the existing athlete-name cache so we don't double-fetch.
+  // Detect core API shape: every item is just { $ref } with no inline data.
+  // If so, dereference each $ref in parallel to get the actual injury record.
+  const looksLikeCoreRefs = items.every(i =>
+    i && typeof i === "object" && typeof i.$ref === "string"
+    && !i.athlete && !i.status && !i.type
+  );
+
+  if (looksLikeCoreRefs){
+    const injuryDocs = await Promise.all(items.map(async ({$ref}) => {
+      try{
+        // ESPN sometimes returns http:// in $ref values; force https.
+        const url = $ref.replace(/^http:\/\//i, "https://");
+        const r = await fetch(url);
+        if (!r.ok) return null;
+        return await r.json();
+      }catch(_){ return null; }
+    }));
+    items = injuryDocs.filter(Boolean);
+  }
+
+  // Athletes inside injury records are also $ref'd — resolve in parallel.
+  // fetchAthleteName uses a localStorage-backed cache, so duplicates are free.
   const refsToResolve = [];
   for (const inj of items){
     const a = inj.athlete || inj.player;
-    if (!a && typeof inj.$ref === "string"){
-      // Core injury record itself $refs the injury, not the athlete.
-      // Inside the injury, athlete is typically inj.athlete.$ref.
+    if (a && a.$ref && !a.displayName && !a.fullName){
+      refsToResolve.push(a.$ref);
     }
-    const aRef = inj.athlete?.$ref;
-    if (!a?.displayName && !a?.fullName && aRef) refsToResolve.push(aRef);
   }
   if (refsToResolve.length){
     await Promise.all(refsToResolve.map(r => fetchAthleteName(r)));
@@ -725,13 +744,19 @@ async function loadAllInjuries(teamIds = []){
       // ESPN keeps moving injuries. Try multiple endpoints in order — first one
       // that returns a non-empty list wins. Each shape is slightly different,
       // so the parser below handles any of them.
+      //
+      // Order matters: as of Apr 2026, core v2 is the only one returning real
+      // data for NBA per-team. Site v2 returns {} (empty) and site web is 404.
+      // Core stays first so we don't waste two roundtrips on dead endpoints.
       const candidates = [
-        // Site v2 — current per-team URL (often returns {} for NBA)
-        `https://site.api.espn.com/apis/site/v2/sports/basketball/nba/teams/${teamId}/injuries`,
-        // Site web common v3 — used to be league-wide; per-team form sometimes works
-        `https://site.web.api.espn.com/apis/common/v3/sports/basketball/nba/teams/${teamId}/injuries`,
-        // Core v2 — the most reliable per-team source historically
+        // Core v2 — confirmed working source. Returns bare $refs to dereference.
         `https://sports.core.api.espn.com/v2/sports/basketball/leagues/nba/teams/${teamId}/injuries?limit=50`,
+        // Site v2 — current per-team URL (often returns {} for NBA, but kept as
+        // safety net in case ESPN flips back to inline data).
+        `https://site.api.espn.com/apis/site/v2/sports/basketball/nba/teams/${teamId}/injuries`,
+        // Site web common v3 — used to be league-wide; per-team form is now 404
+        // but kept as a final attempt in case ESPN restores it.
+        `https://site.web.api.espn.com/apis/common/v3/sports/basketball/nba/teams/${teamId}/injuries`,
       ];
 
       let list = [];
