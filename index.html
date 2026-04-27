@@ -4,6 +4,13 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
 <title>Playoff Ball</title>
+<!-- PWA / Add to Home Screen -->
+<link rel="manifest" href="/manifest.json">
+<meta name="theme-color" content="#0b0d10">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Playoff Ball">
+<link rel="apple-touch-icon" href="/icon.svg">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Anton&family=Oswald:wght@500;700&display=swap" rel="stylesheet">
@@ -191,11 +198,22 @@
     border-radius:999px; padding:5px 12px; cursor:pointer; font-weight:600; font-size:13px;
   }
   .leader-tab.active{background:var(--accent); border-color:var(--accent); color:#111}
-  .leader-row{display:grid; grid-template-columns: 22px 1fr 60px; gap:8px; padding:6px 0; border-bottom:1px solid var(--line); align-items:center}
+  .leader-row{display:grid; grid-template-columns: 36px 1fr 52px; gap:8px; padding:6px 0; border-bottom:1px solid var(--line); align-items:center}
   .leader-row:last-child{border-bottom:0}
-  .leader-rank{color:var(--mute); text-align:right}
+  .leader-headshot{width:32px; height:32px; border-radius:50%; object-fit:cover; object-position:top center; background:var(--panel2); display:block; flex-shrink:0;}
   .leader-name{font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
   .leader-val{text-align:right; font-weight:700}
+  /* Quarter-by-quarter linescore for completed games */
+  .linescore{font-size:11px; margin:6px 0 4px; border-top:1px dashed var(--line); padding-top:7px;}
+  .ls-row{display:flex; align-items:center; line-height:1.7;}
+  .ls-header .ls-period,.ls-header .ls-total{color:var(--mute); font-size:10px; font-weight:700; letter-spacing:.5px;}
+  .ls-team{width:28px; font-size:11px; font-weight:700; color:var(--text); flex-shrink:0;}
+  .ls-period{flex:1; text-align:center; color:var(--mute);}
+  .ls-total{width:30px; text-align:right; font-weight:700; color:var(--text); padding-left:4px;}
+  .ls-loser .ls-team,.ls-loser .ls-total{color:var(--mute); font-weight:600;}
+  /* Top performer pills */
+  .pill.performer{color:var(--mute);}
+  .pill.performer strong{color:var(--text); font-weight:700;}
   .empty{color:var(--mute); padding:10px 0}
 </style>
 </head>
@@ -594,8 +612,61 @@ function renderGames(events){
       }
     }
 
+    // Quarter-by-quarter linescore — only shown for completed games.
+    // ESPN returns linescores as an array of {value} objects on each competitor.
+    let linescoreHtml = "";
+    if (isFinal) {
+      const awayLS = away.linescores || [];
+      const homeLS = home.linescores || [];
+      if (awayLS.length && homeLS.length) {
+        const periods = Math.max(awayLS.length, homeLS.length);
+        const awayAbbr = away.team?.abbreviation || "AWY";
+        const homeAbbr = home.team?.abbreviation || "HME";
+        // Label Q1–Q4; anything beyond is OT, 2OT, etc.
+        const pLabels = Array.from({length: periods}, (_, i) =>
+          i < 4 ? `Q${i+1}` : (i === 4 ? "OT" : `${i-3}OT`)
+        );
+        const lsRow = (abbr, scores, cls) => `
+          <div class="ls-row${cls}">
+            <div class="ls-team">${escAttr(abbr)}</div>
+            ${scores.map(p => `<div class="ls-period">${Math.round(+(p.value ?? p) || 0)}</div>`).join("")}
+            ${Array.from({length: periods - scores.length}, () => `<div class="ls-period">—</div>`).join("")}
+          </div>`;
+        linescoreHtml = `
+          <div class="linescore">
+            <div class="ls-row ls-header">
+              <div class="ls-team"></div>
+              ${pLabels.map(l => `<div class="ls-period">${l}</div>`).join("")}
+              <div class="ls-total">T</div>
+            </div>
+            ${lsRow(awayAbbr, awayLS, awayCls === "lose" ? " ls-loser" : "")}
+            ${lsRow(homeAbbr, homeLS, homeCls === "lose" ? " ls-loser" : "")}
+          </div>`;
+      }
+    }
+
+    // Top performers — pulled from ESPN's competition leaders (live + final only).
+    // c.leaders is an array of {name, displayName, leaders:[{athlete, displayValue}]}.
+    let performersHtml = "";
+    if (isFinal || isLive) {
+      const STAT_ABBR = { pointLeader: "pts", reboundLeader: "reb", assistLeader: "ast" };
+      const pills = (c.leaders || [])
+        .filter(cat => STAT_ABBR[cat.name])
+        .map(cat => {
+          const top = (cat.leaders || [])[0];
+          if (!top) return "";
+          const name = top.athlete?.shortName || top.athlete?.displayName || "";
+          const val  = top.displayValue || (typeof top.value === "number" ? String(Math.round(top.value)) : "");
+          if (!name || !val) return "";
+          return `<span class="pill performer"><strong>${escAttr(val)} ${STAT_ABBR[cat.name]}</strong> ${escAttr(name)}</span>`;
+        })
+        .filter(Boolean)
+        .slice(0, 2);  // cap at 2 so the card doesn't get crowded
+      performersHtml = pills.join("");
+    }
+
     // Always emit .game-extras so async enrichment (live odds, injuries) has a target.
-    const extras = `<div class="game-extras">${seriesPill}${oddsPill}${pickBar}<span data-injury-slot></span></div>`;
+    const extras = `<div class="game-extras">${seriesPill}${oddsPill}${pickBar}${performersHtml}<span data-injury-slot></span></div>`;
 
     const liveBadge = isLive ? `<span class="live-dot"></span>` : "";
     const href = espnGameUrl(ev);
@@ -617,6 +688,7 @@ function renderGames(events){
       ${teamRow(away, "away", awayCls)}
       ${teamRow(home, "home", homeCls)}
       <div class="${metaClass}">${liveBadge}${metaTxt}</div>
+      ${linescoreHtml}
       ${extras}
     </a>`;
   }).join("");
@@ -1436,10 +1508,12 @@ async function fetchAllLeadersOnce(){
       persistNames();
 
       // Now build rows with names and stuff each stat into the cache.
+      // id is stored so renderLeaderRows can construct the ESPN headshot URL.
       for (const stat of Object.keys(rawByStat)){
         const rows = rawByStat[stat].map(r => ({
           name: athleteNameCache[athleteIdFromRef(r.ref)] || "Player",
-          val: r.val,
+          id:   athleteIdFromRef(r.ref),
+          val:  r.val,
         }));
         leadersCache[stat] = { at: Date.now(), rows, source: combo.label };
       }
@@ -1458,13 +1532,18 @@ function renderLeaderRows(rows, src){
     host.innerHTML = `<div class="empty">No leaders.</div>`;
     return;
   }
-  host.innerHTML = rows.map((r,i)=>`
-    <div class="leader-row">
-      <div class="leader-rank">${i+1}.</div>
-      <div class="leader-name">${r.name}</div>
+  host.innerHTML = rows.map((r)=>{
+    // ESPN headshot URL is stable by athlete ID. onerror hides broken images
+    // gracefully (e.g. if a cached row predates the id field being stored).
+    const img = r.id
+      ? `<img class="leader-headshot" src="https://a.espncdn.com/i/headshots/nba/players/full/${encodeURIComponent(r.id)}.png" alt="" loading="lazy" onerror="this.style.opacity='0'">`
+      : `<div class="leader-headshot"></div>`;
+    return `<div class="leader-row">
+      ${img}
+      <div class="leader-name">${escAttr(r.name)}</div>
       <div class="leader-val">${(Math.round(r.val*10)/10).toFixed(1)}</div>
-    </div>
-  `).join("");
+    </div>`;
+  }).join("");
 }
 
 /* ===== Tabs ===== */

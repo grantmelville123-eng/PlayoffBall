@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="112" fill="#0b0d10"/>
+  <defs>
+    <linearGradient id="g" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ffe27a"/>
+      <stop offset="50%" stop-color="#d4af37"/>
+      <stop offset="100%" stop-color="#9c7f24"/>
+    </linearGradient>
+    <radialGradient id="b" cx="35%" cy="35%" r="75%">
+      <stop offset="0%" stop-color="#ff9068"/>
+      <stop offset="60%" stop-color="#ff6a3d"/>
+      <stop offset="100%" stop-color="#c14a22"/>
+    </radialGradient>
+  </defs>
+  <!-- Trophy base -->
+  <rect x="196" y="400" width="120" height="28" rx="6" fill="url(#g)" stroke="#5e4a0e" stroke-width="3"/>
+  <rect x="212" y="372" width="88" height="28" fill="url(#g)" stroke="#5e4a0e" stroke-width="2"/>
+  <path d="M192 284 L212 372 L300 372 L320 284 Z" fill="url(#g)" stroke="#5e4a0e" stroke-width="3"/>
+  <path d="M128 196 L192 284 L320 284 L384 196 Z" fill="url(#g)" stroke="#5e4a0e" stroke-width="3"/>
+  <ellipse cx="256" cy="196" rx="124" ry="26" fill="url(#g)" stroke="#5e4a0e" stroke-width="3"/>
+  <!-- Basketball -->
+  <circle cx="256" cy="118" r="80" fill="url(#b)" stroke="#1a1a1a" stroke-width="5"/>
+  <path d="M176 118 H 336" stroke="#1a1a1a" stroke-width="5" fill="none" stroke-linecap="round"/>
+  <path d="M256 38 V 198" stroke="#1a1a1a" stroke-width="5" fill="none" stroke-linecap="round"/>
+  <path d="M188 60 Q 256 118 188 176" stroke="#1a1a1a" stroke-width="5" fill="none" stroke-linecap="round"/>
+  <path d="M324 60 Q 256 118 324 176" stroke="#1a1a1a" stroke-width="5" fill="none" stroke-linecap="round"/>
+</svg>
