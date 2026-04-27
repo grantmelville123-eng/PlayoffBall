@@ -446,50 +446,174 @@ function spreadToWinPct(spread){
   return normalCdf(-spread / SIGMA);
 }
 
-function makeInternalPick(away, home, odds){
-  // 1) Odds path — convert the spread directly into a probability.
-  const fav = pickAbbrFromOdds(odds, away, home);
-  if (fav){
-    const favWinPct = spreadToWinPct(fav.spread);
-    if (favWinPct != null){
-      const favSidePct = fav.side === "home" ? favWinPct : favWinPct;
-      const homePct = fav.side === "home" ? favWinPct : (1 - favWinPct);
-      return {
-        side: fav.side,
-        homePct,
-        awayPct: 1 - homePct,
-        pct: favSidePct,
-        reason: `market spread ${fav.spread > 0 ? "+" : ""}${fav.spread}`,
-        source: "odds",
-      };
+/* ===== Series momentum factor =====
+   Uses ESPN's structured series.competitors data (wins per team) rather than
+   text parsing. Returns a logit-space adjustment: positive = home benefits,
+   negative = away benefits. Calibrated to be meaningful when records are
+   close, but small enough not to override a large market spread. */
+function seriesMomentumLogit(homeWins, awayWins){
+  homeWins = parseInt(homeWins || 0, 10);
+  awayWins = parseInt(awayWins || 0, 10);
+  if (homeWins === awayWins) return 0;
+  const leader   = homeWins > awayWins ? "home" : "away";
+  const lw = Math.max(homeWins, awayWins), tw = Math.min(homeWins, awayWins);
+  const MOMENTUM = {"3-0":0.22,"3-1":0.14,"3-2":0.07,"2-0":0.09,"2-1":0.04,"1-0":0.02};
+  const mag = MOMENTUM[`${lw}-${tw}`] || 0;
+  return leader === "home" ? mag : -mag;
+}
+
+/* ===== Injury adjustment =====
+   Applies a per-player logit-space penalty for each confirmed-out or doubtful
+   player. We don't have star-vs-bench data here, so we use a modest flat rate
+   and cap each team's total — enough to matter when 2-3 key players are out,
+   but not so large that a deep bench wipeout tanks a team by 20 probability
+   points. Positive return = home team benefits (away more injured). */
+function injuryAdjustmentLogit(awayInjuries, homeInjuries){
+  const PER_OUT      = 0.13;   // ≈ 1.3-pt implied swing per confirmed-out player
+  const PER_DOUBTFUL = 0.06;
+  const PER_GTD      = 0.02;   // "game-time decision" / "day-to-day"
+  const MAX_TEAM     = 0.28;   // cap — roughly 3 confirmed starters' worth
+  function penalty(list){
+    let p = 0;
+    for (const inj of (list || [])){
+      const k = injKey(inj.status);  // 0=out/suspended, 1=doubtful, 3=gtd/dtd
+      if      (k === 0) p += PER_OUT;
+      else if (k === 1) p += PER_DOUBTFUL;
+      else if (k === 3) p += PER_GTD;
     }
-    // Spread parsed but somehow not finite — fall through to record-based.
+    return Math.min(p, MAX_TEAM);
+  }
+  return penalty(awayInjuries) - penalty(homeInjuries);
+}
+
+/* ===== Internal pick model =====
+   Three-factor model, all adjustments in logit space:
+     1. Best available spread  →  live Odds API line > ESPN opening line > season records
+     2. Series momentum        →  quality gap implied by the current series score
+     3. Injury adjustment      →  real-time impact of confirmed-out / doubtful players
+
+   enrichGames calls updatePickBar up to twice after renderGames:
+     • Pass 1 — live odds arrive  → updates spread source + series
+     • Pass 2 — injuries arrive   → adds injury factor on top
+
+   We never expect this to beat the linemakers — the model is meant to be
+   transparent, fun to compare against the market, and clearly labeled. */
+function makeInternalPick(away, home, {
+  espnOdds     = null,   // ESPN c.odds[0] — pre-game/opening line
+  liveEntry    = null,   // Odds API entry {spreadTeamMascot, spreadPoint}
+  awayInjuries = [],
+  homeInjuries = [],
+  seriesHw     = 0,      // home team's series wins (integer from data attribute)
+  seriesAw     = 0,      // away team's series wins
+} = {}){
+
+  // ── Step 1: Base probability ─────────────────────────────────────────────
+  let homePct = null;
+  let spreadLabel = null;
+
+  // 1a. Live Odds API spread — most current, updated every few minutes.
+  if (liveEntry?.spreadPoint != null){
+    const hMascot = teamMascot(home.team?.displayName || "");
+    const aMascot = teamMascot(away.team?.displayName || "");
+    const favIsHome = liveEntry.spreadTeamMascot === hMascot;
+    const favIsAway = liveEntry.spreadTeamMascot === aMascot;
+    if (favIsHome || favIsAway){
+      const sp = Number(liveEntry.spreadPoint);
+      homePct = favIsHome ? spreadToWinPct(sp) : 1 - spreadToWinPct(sp);
+      spreadLabel = `live line ${sp > 0 ? "+" : ""}${sp}`;
+    }
   }
 
-  // 2) Records path — blend each side's season win % with a home-court bump.
-  const aPct = winPctFromSummary(away?.records?.[0]?.summary);
-  const hPct = winPctFromSummary(home?.records?.[0]?.summary);
-  if (aPct == null && hPct == null) return null;
+  // 1b. ESPN opening line — accurate at game time, stale during live games.
+  if (homePct == null && espnOdds){
+    const fav = pickAbbrFromOdds(espnOdds, away, home);
+    if (fav){
+      const wp = spreadToWinPct(fav.spread);
+      if (wp != null){
+        homePct = fav.side === "home" ? wp : 1 - wp;
+        spreadLabel = `opening line ${fav.spread > 0 ? "+" : ""}${fav.spread}`;
+      }
+    }
+  }
 
-  // Treat each side's win% as Bayesian prior; convert to log-odds, add 3pt
-  // home-court edge (~0.18 logits), back to probability.
-  const HOME_EDGE_LOGITS = 0.18;
-  const safeA = Math.min(0.95, Math.max(0.05, aPct ?? 0.5));
-  const safeH = Math.min(0.95, Math.max(0.05, hPct ?? 0.5));
-  const logitA = Math.log(safeA / (1 - safeA));
-  const logitH = Math.log(safeH / (1 - safeH)) + HOME_EDGE_LOGITS;
-  // P(home wins) ≈ logistic(logitH - logitA) / 2 + 0.5  → standard log5 method.
-  const diff = logitH - logitA;
-  const homePct = 1 / (1 + Math.exp(-diff));
+  // 1c. Season-record log5 fallback — used only when no market data is available.
+  if (homePct == null){
+    const aPct = winPctFromSummary(away?.records?.[0]?.summary);
+    const hPct = winPctFromSummary(home?.records?.[0]?.summary);
+    if (aPct == null && hPct == null) return null;
+    const safeA = Math.min(0.95, Math.max(0.05, aPct ?? 0.5));
+    const safeH = Math.min(0.95, Math.max(0.05, hPct ?? 0.5));
+    // log5 + 0.20 logit home-court bump (≈ 2.5 pt playoff home advantage)
+    const diff = (Math.log(safeH / (1 - safeH)) + 0.20) - Math.log(safeA / (1 - safeA));
+    homePct = 1 / (1 + Math.exp(-diff));
+    spreadLabel = "season records";
+  }
+
+  // ── Steps 2 & 3: Adjustments in logit space ──────────────────────────────
+  let logitHome = Math.log(homePct / (1 - homePct));
+  const adjLabels = [];
+
+  const seriesAdj = seriesMomentumLogit(seriesHw, seriesAw);
+  if (Math.abs(seriesAdj) > 0.005){
+    logitHome += seriesAdj;
+    adjLabels.push("series edge");
+  }
+
+  const injAdj = injuryAdjustmentLogit(awayInjuries, homeInjuries);
+  if (Math.abs(injAdj) > 0.005){
+    logitHome += injAdj;
+    adjLabels.push(injAdj > 0 ? "away injuries" : "home injuries");
+  }
+
+  // Clamp to ±3.5 logits (~97%/3%) — prevents nonsensical outputs.
+  logitHome = Math.max(-3.5, Math.min(3.5, logitHome));
+  homePct = 1 / (1 + Math.exp(-logitHome));
+
   const side = homePct >= 0.5 ? "home" : "away";
+  const reason = adjLabels.length ? `${spreadLabel} + ${adjLabels.join(", ")}` : spreadLabel;
   return {
-    side,
-    homePct,
-    awayPct: 1 - homePct,
-    pct: side === "home" ? homePct : (1 - homePct),
-    reason: "season records",
-    source: "record",
+    side, homePct, awayPct: 1 - homePct,
+    pct: side === "home" ? homePct : 1 - homePct,
+    reason, source: liveEntry ? "live" : (espnOdds ? "opening" : "record"),
   };
+}
+
+/* ===== Update pick bar in-place =====
+   Called by enrichGames as live odds and injury data arrive — lets the pick
+   bar reflect the best current information without a full re-render. */
+function updatePickBar(card, pick){
+  if (!pick || !Number.isFinite(pick.homePct)) return;
+  const bar = card.querySelector("[data-pick-bar]");
+  if (!bar) return;
+  const homeAbbr = card.dataset.homeAbbr || "HOME";
+  const awayAbbr = card.dataset.awayAbbr || "AWAY";
+  const homePct  = Math.round(pick.homePct * 100);
+  const awayPct  = 100 - homePct;
+  const homePicked = pick.side === "home";
+  bar.setAttribute("title",
+    `Win probability — based on ${pick.reason}. Pick: ${homePicked ? homeAbbr : awayAbbr}.`);
+  const awayFill  = bar.querySelector(".pick-bar-away");
+  const homeFill  = bar.querySelector(".pick-bar-home");
+  const awayLabel = bar.querySelector(".pick-bar-label:not(.right)");
+  const homeLabel = bar.querySelector(".pick-bar-label.right");
+  if (awayFill){
+    awayFill.style.flex = `${(awayPct/100).toFixed(3)} 0 0`;
+    awayFill.className  = `pick-bar-away${!homePicked ? " picked" : ""}`;
+  }
+  if (homeFill){
+    homeFill.style.flex = `${(homePct/100).toFixed(3)} 0 0`;
+    homeFill.className  = `pick-bar-home${homePicked ? " picked" : ""}`;
+  }
+  if (awayLabel){
+    awayLabel.className = `pick-bar-label${!homePicked ? " picked" : ""}`;
+    awayLabel.innerHTML = `${!homePicked ? `<span class="pick-mark">PICK</span>` : ""}` +
+      `<strong>${escAttr(awayAbbr)}</strong> ${awayPct}%`;
+  }
+  if (homeLabel){
+    homeLabel.className = `pick-bar-label right${homePicked ? " picked" : ""}`;
+    homeLabel.innerHTML = `<strong>${escAttr(homeAbbr)}</strong> ${homePct}%` +
+      `${homePicked ? `<span class="pick-mark">PICK</span>` : ""}`;
+  }
 }
 function espnGameUrl(ev){
   const fromLinks = (ev.links||[]).find(l => /game/i.test((l.rel||[]).join(",")) && l.href);
@@ -581,9 +705,21 @@ function renderGames(events){
       }
     }
 
+    // Extract series wins for each team so we can store them on the card
+    // and also pass them to the initial pick calculation.
+    const seriesComps  = series?.competitors || [];
+    const hSeriesComp  = seriesComps.find(sc => String(sc.team?.id) === String(home.team?.id || home.id || ""));
+    const aSeriesComp  = seriesComps.find(sc => String(sc.team?.id) === String(away.team?.id || away.id || ""));
+    const seriesHw     = parseInt(hSeriesComp?.wins ?? 0, 10);
+    const seriesAw     = parseInt(aSeriesComp?.wins ?? 0, 10);
+
     let pickBar = "";
     if (!isFinal){
-      const pick = makeInternalPick(away, home, odds);
+      const pick = makeInternalPick(away, home, {
+        espnOdds: odds,
+        seriesHw,
+        seriesAw,
+      });
       if (pick && Number.isFinite(pick.homePct)){
         const homeAbbr = home.team?.abbreviation || "HOME";
         const awayAbbr = away.team?.abbreviation || "AWAY";
@@ -593,7 +729,7 @@ function renderGames(events){
         const awayPicked = !homePicked;
         const tip = `Win probability — based on ${pick.reason}. Pick: ${homePicked ? homeAbbr : awayAbbr}.`;
         pickBar = `
-          <div class="pick-bar" title="${escAttr(tip)}">
+          <div class="pick-bar" title="${escAttr(tip)}" data-pick-bar>
             <div class="pick-bar-track">
               <div class="pick-bar-away${awayPicked ? " picked" : ""}" style="flex:${(awayPct/100).toFixed(3)} 0 0"></div>
               <div class="pick-bar-home${homePicked ? " picked" : ""}" style="flex:${(homePct/100).toFixed(3)} 0 0"></div>
@@ -684,7 +820,12 @@ function renderGames(events){
       data-away-abbr="${escAttr(away.team?.abbreviation||"")}"
       data-home-name="${escAttr(home.team?.displayName||home.team?.shortDisplayName||"")}"
       data-away-name="${escAttr(away.team?.displayName||away.team?.shortDisplayName||"")}"
-      data-state-detail="${escAttr(st.shortDetail||"")}">
+      data-state-detail="${escAttr(st.shortDetail||"")}"
+      data-home-record="${escAttr(home.records?.[0]?.summary||"")}"
+      data-away-record="${escAttr(away.records?.[0]?.summary||"")}"
+      data-espn-odds="${escAttr(odds?.details||"")}"
+      data-series-hw="${seriesHw}"
+      data-series-aw="${seriesAw}">
       ${teamRow(away, "away", awayCls)}
       ${teamRow(home, "home", homeCls)}
       <div class="${metaClass}">${liveBadge}${metaTxt}</div>
@@ -1152,6 +1293,28 @@ async function enrichGames(){
         }
       });
     }
+    // Pass 1 pick bar update — live spread + series, no injuries yet.
+    // This fixes the bug where the pick bar stayed on the ESPN opening line
+    // even after live Odds API data arrived.
+    cards.forEach(card => {
+      if (card.dataset.state === "post") return;
+      const key = gameKey(card.dataset.awayName, card.dataset.homeName);
+      const o   = oddsByKey && oddsByKey[key];
+      const espnOddsStr = card.dataset.espnOdds;
+      const pick = makeInternalPick(
+        { team: { displayName: card.dataset.awayName, abbreviation: card.dataset.awayAbbr },
+          records: [{ summary: card.dataset.awayRecord }] },
+        { team: { displayName: card.dataset.homeName, abbreviation: card.dataset.homeAbbr },
+          records: [{ summary: card.dataset.homeRecord }] },
+        {
+          liveEntry:  o || null,
+          espnOdds:   espnOddsStr ? { details: espnOddsStr } : null,
+          seriesHw:   card.dataset.seriesHw,
+          seriesAw:   card.dataset.seriesAw,
+        }
+      );
+      updatePickBar(card, pick);
+    });
   }catch(e){
     if (DEBUG_LEADERS) console.log("[odds-api] enrich failed", e);
   }
@@ -1168,6 +1331,31 @@ async function enrichGames(){
     const html = awayHtml + homeHtml;
     if (html) slot.outerHTML = html;
     else slot.remove();
+  });
+
+  // Pass 2 pick bar update — live spread + series + injury adjustment.
+  // Now that byTeam is populated, we can fold real-time injury data into
+  // the pick probability. This is the final state of the pick bar.
+  cards.forEach(card => {
+    if (card.dataset.state === "post") return;
+    const key        = gameKey(card.dataset.awayName, card.dataset.homeName);
+    const o          = liveOddsApiCache?.byKey?.[key] || null;
+    const espnOddsStr = card.dataset.espnOdds;
+    const pick = makeInternalPick(
+      { team: { displayName: card.dataset.awayName, abbreviation: card.dataset.awayAbbr },
+        records: [{ summary: card.dataset.awayRecord }] },
+      { team: { displayName: card.dataset.homeName, abbreviation: card.dataset.homeAbbr },
+        records: [{ summary: card.dataset.homeRecord }] },
+      {
+        liveEntry:     o,
+        espnOdds:      espnOddsStr ? { details: espnOddsStr } : null,
+        awayInjuries:  byTeam[card.dataset.awayId] || [],
+        homeInjuries:  byTeam[card.dataset.homeId] || [],
+        seriesHw:      card.dataset.seriesHw,
+        seriesAw:      card.dataset.seriesAw,
+      }
+    );
+    updatePickBar(card, pick);
   });
 }
 
