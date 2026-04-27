@@ -54,6 +54,9 @@
     /* On phones the news feed is long — show Playoff Leaders first instead. */
     .right-col .leaders-card{ order: 0; }
     .right-col .feed-card   { order: 1; }
+    /* r/nba feed doesn't work on mobile (Reddit blocks server-side OAuth
+       registration is broken) — hide the tab so users only see NBA News. */
+    .leader-tab[data-feed="reddit"]{ display: none; }
   }
 
   .card{background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:14px; margin-bottom:14px}
@@ -998,14 +1001,23 @@ async function enrichGames(){
     }
   }));
 
-  // 2) Real live odds from The Odds API (DraftKings/FanDuel via our Pages
-  //    Function /api/live-odds). One fetch covers every NBA game on the slate;
-  //    map is keyed by an order-independent mascot pair.
+  // 2) Real live odds from The Odds API (DraftKings/FanDuel via /api/live-odds).
+  //    One fetch covers every NBA game on the slate; map is keyed by an
+  //    order-independent mascot pair.
   //
   //    This SUPERSEDES the OPEN/PRE/CLOSE label whenever we find a match —
   //    The Odds API gives us actual current betting lines, including in-game
   //    moves. If the API is unconfigured (503) or the game isn't on their
   //    slate, the existing OPEN/PRE/CLOSE pill stays visible.
+  //
+  //    QUOTA GUARD: only called when at least one game is in progress.
+  //    Pre- and post-game cards already show ESPN's lines (rendered above),
+  //    so there's nothing to be gained on non-live slates and skipping saves
+  //    2 credits per page load (the cost of our 2-market request).
+  if (!liveCards.length){
+    if (DEBUG_LEADERS) console.log("[odds-api] skipped — no live games on slate");
+    return;
+  }
   try{
     const oddsByKey = await loadLiveOddsApi();
     if (oddsByKey && Object.keys(oddsByKey).length){
@@ -1122,16 +1134,15 @@ const LS_REDDIT          = "pb_reddit_v1";
 const REDDIT_CACHE_TTL_MS = 10 * 60 * 1000;  // 10 min
 
 async function fetchRedditFromAny(){
-  // Order matters. The Netlify Function is FIRST because it's the only path
-  // that reliably works on mobile Safari (sets a non-browser UA server-side
-  // and CDN-caches the response). Direct attempts come after as fallbacks
-  // for browsers/networks where they happen to work.
+  // Order matters. The Vercel function is FIRST because it's the only path
+  // that reliably works on mobile Safari (sets a non-browser UA server-side,
+  // tries old.reddit.com then www.reddit.com, and CDN-caches the response).
+  // Direct attempts come after as last-resort fallbacks for desktop browsers
+  // on networks where Reddit's CORS policy happens to allow them.
   const urls = [
     "/api/reddit-fn?sub=nba&limit=15",
-    "/.netlify/functions/reddit?sub=nba&limit=15",
     "https://api.reddit.com/r/nba/hot?limit=15",
     "https://www.reddit.com/r/nba/hot.json?limit=15",
-    "/api/reddit/r/nba/hot.json?limit=15",
   ];
   let lastErr = null;
   for (const url of urls){
@@ -1154,10 +1165,16 @@ async function fetchRedditFromAny(){
 function renderRedditItems(items, host){
   if(!items.length){ host.innerHTML = `<div class="empty">No posts.</div>`; return; }
   host.innerHTML = items.map(p=>{
-    const link = `https://www.reddit.com${p.permalink}`;
+    // permalink may be relative (/r/nba/...) or absolute (from RSS source).
+    const link = p.permalink.startsWith("http") ? p.permalink : `https://www.reddit.com${p.permalink}`;
+    // RSS fallback omits upvote/comment counts — only show what we have.
+    const metaParts = [];
+    if (p.ups != null) metaParts.push(`▲ ${p.ups?.toLocaleString?.()||p.ups}`);
+    if (p.num_comments != null) metaParts.push(`${p.num_comments} comments`);
+    metaParts.push("r/nba");
     return `<div class="reddit-item">
       <a href="${escAttr(link)}" target="_blank" rel="noopener">${escAttr(p.title)}</a>
-      <div class="reddit-meta">▲ ${p.ups?.toLocaleString?.()||p.ups} · ${p.num_comments} comments · r/nba</div>
+      <div class="reddit-meta">${metaParts.join(" · ")}</div>
     </div>`;
   }).join("");
 }
