@@ -762,11 +762,12 @@ function renderGames(events){
         const pLabels = Array.from({length: periods}, (_, i) =>
           i < 4 ? `Q${i+1}` : (i === 4 ? "OT" : `${i-3}OT`)
         );
-        const lsRow = (abbr, scores, cls) => `
+        const lsRow = (abbr, scores, total, cls) => `
           <div class="ls-row${cls}">
             <div class="ls-team">${escAttr(abbr)}</div>
             ${scores.map(p => `<div class="ls-period">${Math.round(+(p.value ?? p) || 0)}</div>`).join("")}
             ${Array.from({length: periods - scores.length}, () => `<div class="ls-period">—</div>`).join("")}
+            <div class="ls-total">${escAttr(String(total ?? ""))}</div>
           </div>`;
         linescoreHtml = `
           <div class="linescore">
@@ -775,8 +776,8 @@ function renderGames(events){
               ${pLabels.map(l => `<div class="ls-period">${l}</div>`).join("")}
               <div class="ls-total">T</div>
             </div>
-            ${lsRow(awayAbbr, awayLS, awayCls === "lose" ? " ls-loser" : "")}
-            ${lsRow(homeAbbr, homeLS, homeCls === "lose" ? " ls-loser" : "")}
+            ${lsRow(awayAbbr, awayLS, away.score ?? "", awayCls === "lose" ? " ls-loser" : "")}
+            ${lsRow(homeAbbr, homeLS, home.score ?? "", homeCls === "lose" ? " ls-loser" : "")}
           </div>`;
       }
     }
